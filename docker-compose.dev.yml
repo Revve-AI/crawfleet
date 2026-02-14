@@ -1,0 +1,19 @@
+services:
+  traefik:
+    image: traefik:v3.2
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=fleet-proxy"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - fleet-proxy
+    restart: unless-stopped
+
+networks:
+  fleet-proxy:
+    name: fleet-proxy

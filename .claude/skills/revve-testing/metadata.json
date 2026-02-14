@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "organization": "Revve AI",
+  "date": "February 2026",
+  "abstract": "Complete testing infrastructure guide for the Revve AI codebase covering unit tests, integration tests, LLM evaluation tests, mocking patterns, CI/CD workflows, and common pitfalls. Designed for AI agents to write consistent, correct tests across all layers."
+}

@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "organization": "Revve AI",
+  "date": "February 2026",
+  "abstract": "Comprehensive implementation guide for the Revve AI codebase covering API endpoints, data fetching patterns, database migrations, design system, frontend components, queue processors, and AI/LLM integration. Designed for AI agents to produce consistent, project-aligned code across all layers of the stack."
+}

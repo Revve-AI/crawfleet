@@ -1,0 +1,59 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Tenant {
+  id              String   @id @default(cuid())
+  slug            String   @unique
+  displayName     String
+  email           String?
+
+  enabled         Boolean  @default(true)
+  containerId     String?
+  containerStatus String   @default("stopped")
+  accessAppId     String?
+
+  allowAnthropic  Boolean  @default(true)
+  allowOpenAI     Boolean  @default(false)
+  allowGemini     Boolean  @default(false)
+  allowBrave      Boolean  @default(false)
+  allowElevenLabs Boolean  @default(false)
+
+  defaultModel    String   @default("anthropic/claude-sonnet-4-5")
+  envOverrides    String?
+  execSecurity    String   @default("deny")
+  browserEnabled  Boolean  @default(false)
+
+  gatewayToken    String
+
+  lastHealthCheck  DateTime?
+  lastHealthStatus String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  auditLogs       AuditLog[]
+}
+
+model GlobalSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([createdAt])
+}

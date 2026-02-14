@@ -1,0 +1,40 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=fleet-proxy"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - fleet-proxy
+    restart: unless-stopped
+
+  dashboard:
+    image: asia-southeast1-docker.pkg.dev/keen-frame-487200-c3/openclaw-fleet/dashboard:latest
+    env_file: .env
+    environment:
+      - HOST_DATA_DIR=${HOST_DATA_DIR:-./data}
+    group_add:
+      - "${DOCKER_GID:-1001}"
+    volumes:
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`fleet.${BASE_DOMAIN}`)"
+      - "traefik.http.routers.dashboard.entrypoints=web"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=3000"
+    networks:
+      - fleet-proxy
+    restart: unless-stopped
+    depends_on:
+      - traefik
+
+networks:
+  fleet-proxy:
+    external: true
