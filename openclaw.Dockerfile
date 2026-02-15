@@ -21,11 +21,7 @@ RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
 # agent-browser (vercel-labs/agent-browser)
 RUN npm install -g agent-browser && agent-browser install --with-deps
 
-# Homebrew (requires git, build-essential, procps, file)
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      git build-essential procps file && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Homebrew
 RUN mkdir -p /home/linuxbrew/.linuxbrew && chown -R node:node /home/linuxbrew
 USER node
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
