@@ -17,8 +17,12 @@ services:
   dashboard:
     image: asia-southeast1-docker.pkg.dev/keen-frame-487200-c3/openclaw-fleet/dashboard:latest
     env_file: .env
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
     environment:
       - HOST_DATA_DIR=${HOST_DATA_DIR:-./data}
+      - BACKUP_BUCKET=${BACKUP_BUCKET:-}
+      - BACKUP_INTERVAL_MIN=${BACKUP_INTERVAL_MIN:-15}
     group_add:
       - "${DOCKER_GID:-1001}"
     volumes:

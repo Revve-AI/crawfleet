@@ -60,8 +60,7 @@ app.prepare().then(() => {
     const match = pathname?.match(SHELL_PATH_RE);
 
     if (!match) {
-      console.error("[shell] WebSocket upgrade rejected: path does not match shell pattern");
-      socket.destroy();
+      // Non-shell WebSocket (e.g. Next.js HMR) — pass through silently
       return;
     }
 
@@ -244,5 +243,14 @@ app.prepare().then(() => {
 
   server.listen(port, hostname, () => {
     console.log(`> Ready on http://${hostname}:${port}`);
+
+    if (process.env.BACKUP_BUCKET) {
+      import("./src/lib/backup").then(({ startBackupMonitor }) => {
+        startBackupMonitor();
+        console.log(`[backup] Monitor started (every ${process.env.BACKUP_INTERVAL_MIN || 15}m)`);
+      }).catch((err) => {
+        console.error("[backup] Failed to load backup module:", err);
+      });
+    }
   });
 });

@@ -53,6 +53,44 @@ step_build() {
   echo "Pushed $IMAGE"
 }
 
+step_openclaw() {
+  echo "=== Build custom OpenClaw image (from source) ==="
+  local clone_dir="${OPENCLAW_CLONE_DIR:-/tmp/openclaw-build}"
+  local repo_url="${OPENCLAW_REPO_URL:-https://github.com/openclaw/openclaw.git}"
+  local tag="${OPENCLAW_TAG:?OPENCLAW_TAG is required (e.g. v2026.2.14)}"
+  local img_tag="revve-${tag}"
+
+  if [ -d "$clone_dir/.git" ]; then
+    echo "Fetching tags in $clone_dir ..."
+    git -C "$clone_dir" fetch --tags --force
+  else
+    echo "Cloning OpenClaw repo into $clone_dir ..."
+    git clone "$repo_url" "$clone_dir"
+  fi
+
+  git -C "$clone_dir" checkout "tags/${tag}"
+
+  # Replace upstream Dockerfile with our custom one (baked-in binaries)
+  cp "$PROJECT_DIR/openclaw.Dockerfile" "$clone_dir/Dockerfile"
+
+  cd "$clone_dir"
+  local apt_packages="${OPENCLAW_DOCKER_APT_PACKAGES:-git curl wget jq socat python3 python3-pip ffmpeg build-essential procps}"
+  docker build --platform linux/amd64 \
+    --build-arg OPENCLAW_DOCKER_APT_PACKAGES="$apt_packages" \
+    -t "openclaw:${img_tag}" .
+
+  # Tag and push to our registry
+  gcloud auth configure-docker "$REGISTRY_HOST" --quiet
+  local remote_img="${DEPLOY_REGISTRY}/openclaw:${img_tag}"
+  docker tag "openclaw:${img_tag}" "$remote_img"
+  docker push "$remote_img"
+  echo ""
+  echo "Pushed $remote_img"
+  echo "Server .env OPENCLAW_IMAGE must be set to: $remote_img"
+
+  cd "$PROJECT_DIR"
+}
+
 step_sync() {
   echo "=== Step 3: Sync compose and config ==="
   cd "$PROJECT_DIR"
@@ -164,15 +202,16 @@ step_report() {
 STEP="${1:-all}"
 
 case "$STEP" in
-  docker)  step_docker ;;
-  build)   step_build ;;
-  sync)    step_sync ;;
-  auth)    step_auth ;;
-  network) step_network ;;
-  tunnel)  step_tunnel ;;
-  deploy)  step_build; step_sync; step_deploy; step_verify; step_report ;;
-  start)   step_deploy ;;
-  verify)  step_verify ;;
+  docker)   step_docker ;;
+  build)    step_build ;;
+  openclaw) step_openclaw ;;
+  sync)     step_sync ;;
+  auth)     step_auth ;;
+  network)  step_network ;;
+  tunnel)   step_tunnel ;;
+  deploy)   step_build; step_sync; step_deploy; step_verify; step_report ;;
+  start)    step_deploy ;;
+  verify)   step_verify ;;
   all)
     echo "Verifying SSH..."
     remote "echo SSH_OK"
@@ -188,20 +227,21 @@ case "$STEP" in
     step_report
     ;;
   *)
-    echo "Usage: $0 [docker|build|sync|auth|network|tunnel|deploy|start|verify|all]"
+    echo "Usage: $0 [docker|build|openclaw|sync|auth|network|tunnel|deploy|start|verify|all]"
     echo ""
-    echo "  all     — run all steps (default)"
-    echo "  build   — build image locally and push to registry"
-    echo "  deploy  — build + sync + pull + restart (typical redeploy)"
-    echo "  start   — just pull and restart on server"
-    echo "  sync    — sync compose/prisma files to server"
-    echo "  verify  — check if dashboard is running"
+    echo "  all      — run all steps (default)"
+    echo "  build    — build dashboard image and push to registry"
+    echo "  openclaw — build custom OpenClaw image and push to registry"
+    echo "  deploy   — build + sync + pull + restart (typical redeploy)"
+    echo "  start    — just pull and restart on server"
+    echo "  sync     — sync compose/prisma files to server"
+    echo "  verify   — check if dashboard is running"
     echo ""
     echo "First-time setup steps:"
-    echo "  docker  — install Docker on server"
-    echo "  auth    — configure server gcloud/docker auth"
-    echo "  network — create fleet-proxy Docker network"
-    echo "  tunnel  — update Cloudflare tunnel ingress"
+    echo "  docker   — install Docker on server"
+    echo "  auth     — configure server gcloud/docker auth"
+    echo "  network  — create fleet-proxy Docker network"
+    echo "  tunnel   — update Cloudflare tunnel ingress"
     exit 1
     ;;
 esac

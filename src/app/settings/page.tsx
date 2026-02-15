@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
 import NavShell from "@/components/NavShell";
 import SettingsForm from "@/components/SettingsForm";
+import BackupPanel from "@/components/BackupPanel";
+import { BACKUP_BUCKET } from "@/lib/constants";
 
 export default async function SettingsPage() {
   const email = await getAuthEmail();
@@ -21,6 +23,18 @@ export default async function SettingsPage() {
           <h2 className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium mb-3">Domain</h2>
           <p className="font-mono text-sm text-zinc-200">{domain}</p>
           <p className="text-xs text-zinc-500 mt-1.5">Tenants accessible at <span className="font-mono text-zinc-400">[slug].{domain}</span></p>
+        </div>
+
+        <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-6">
+          <h2 className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium mb-1.5">Backups</h2>
+          <p className="text-xs text-zinc-500 mb-4">
+            Per-tenant data is backed up to Google Cloud Storage on a timer.
+          </p>
+          {BACKUP_BUCKET ? (
+            <BackupPanel bucket={BACKUP_BUCKET} />
+          ) : (
+            <p className="text-sm text-zinc-500">Not configured. Set <code className="font-mono text-zinc-400 text-xs">BACKUP_BUCKET</code> to enable.</p>
+          )}
         </div>
 
         <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-6">

@@ -8,3 +8,6 @@ export const DATA_DIR = process.env.DATA_DIR || "./data";
 // inside a container, DATA_DIR resolves to /app/data which is not a valid host path)
 export const HOST_DATA_DIR = process.env.HOST_DATA_DIR || DATA_DIR;
 export const FLEET_TLS = process.env.FLEET_TLS !== "false";
+export const BACKUP_BUCKET = process.env.BACKUP_BUCKET || "";
+export const BACKUP_INTERVAL_MS =
+  parseInt(process.env.BACKUP_INTERVAL_MIN || "15", 10) * 60_000;

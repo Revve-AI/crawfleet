@@ -21,14 +21,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build
-RUN pnpm exec esbuild server.ts --bundle --platform=node --target=node22 --outfile=custom-server.js --external:next --external:@prisma/client --external:dockerode
+RUN pnpm exec esbuild server.ts --bundle --platform=node --target=node22 --outfile=custom-server.js --external:next --external:@prisma/client --external:dockerode --external:@google-cloud/storage
 
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
 # Install Prisma CLI for db push at startup
-RUN npm install -g prisma@6
+RUN apk add --no-cache sqlite && npm install -g prisma@6
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/public ./public
