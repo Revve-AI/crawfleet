@@ -31,7 +31,6 @@ ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}
 
 # gogcli — Gmail/Calendar/Drive CLI (steipete/gogcli)
 RUN brew install steipete/tap/gogcli
-RUN brew install steipete/tap/summarize
 
 USER root
 
