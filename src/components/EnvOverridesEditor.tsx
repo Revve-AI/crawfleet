@@ -3,9 +3,7 @@
 import { useState } from "react";
 
 interface Props {
-  /** Key names that already have overrides stored in DB (values hidden) */
   existingKeys: string[];
-  /** New overrides being set in this form session */
   overrides: Record<string, string>;
   onChange: (overrides: Record<string, string>) => void;
 }
@@ -14,7 +12,6 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
 
-  // Merge existing DB keys with new entries being added
   const allKeys = Array.from(new Set([...existingKeys, ...Object.keys(overrides)]));
 
   function addEntry() {
@@ -25,7 +22,6 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
   }
 
   function clearEntry(key: string) {
-    // Empty string signals deletion to the API
     onChange({ ...overrides, [key]: "" });
   }
 
@@ -37,8 +33,8 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
 
   return (
     <div className="space-y-3">
-      <label className="block text-sm font-medium text-gray-300">Environment Overrides</label>
-      <p className="text-xs text-gray-500">Per-tenant env vars that override global settings. Leave empty to use global values.</p>
+      <label className="block text-sm font-medium text-zinc-300">Environment Overrides</label>
+      <p className="text-xs text-zinc-500">Per-tenant env vars that override global settings.</p>
 
       {allKeys.map((key) => {
         const isExisting = existingKeys.includes(key);
@@ -47,16 +43,16 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
 
         return (
           <div key={key} className="flex items-center gap-2">
-            <span className="w-48 text-sm font-mono text-gray-300 truncate">{key}</span>
+            <span className="w-44 text-sm font-mono text-zinc-300 truncate shrink-0">{key}</span>
             {isExisting && !hasNewValue && !isMarkedForDeletion && (
               <>
-                <span className="flex-1 text-xs text-gray-500 italic">override set</span>
+                <span className="flex-1 text-xs text-zinc-500 italic">override set</span>
                 <input
                   type="password"
                   value={overrides[key] || ""}
                   onChange={(e) => onChange({ ...overrides, [key]: e.target.value })}
                   placeholder="Enter new value"
-                  className="flex-1 px-2.5 py-1 bg-gray-800 border border-gray-700 rounded text-gray-100 placeholder-gray-500 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="flex-1 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-xs focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
                 />
                 <button
                   type="button"
@@ -73,7 +69,7 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
                 <button
                   type="button"
                   onClick={() => removeNewEntry(key)}
-                  className="px-2 py-1 text-xs text-gray-400 hover:text-gray-300"
+                  className="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-300"
                 >
                   Undo
                 </button>
@@ -86,7 +82,7 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
                   value={overrides[key] || ""}
                   onChange={(e) => onChange({ ...overrides, [key]: e.target.value })}
                   placeholder="Value"
-                  className="flex-1 px-2.5 py-1 bg-gray-800 border border-gray-700 rounded text-gray-100 placeholder-gray-500 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="flex-1 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-xs focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
                 />
                 <button
                   type="button"
@@ -104,12 +100,12 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
                   value={overrides[key]}
                   onChange={(e) => onChange({ ...overrides, [key]: e.target.value })}
                   placeholder="New value"
-                  className="flex-1 px-2.5 py-1 bg-gray-800 border border-gray-700 rounded text-gray-100 placeholder-gray-500 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  className="flex-1 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-xs focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
                 />
                 <button
                   type="button"
                   onClick={() => removeNewEntry(key)}
-                  className="px-2 py-1 text-xs text-gray-400 hover:text-gray-300"
+                  className="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-300"
                 >
                   Cancel
                 </button>
@@ -125,20 +121,20 @@ export default function EnvOverridesEditor({ existingKeys, overrides, onChange }
           value={newKey}
           onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
           placeholder="KEY_NAME"
-          className="w-48 px-2.5 py-1 bg-gray-800 border border-gray-700 rounded text-gray-100 placeholder-gray-500 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+          className="w-44 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
         />
         <input
           type="password"
           value={newValue}
           onChange={(e) => setNewValue(e.target.value)}
           placeholder="Value"
-          className="flex-1 px-2.5 py-1 bg-gray-800 border border-gray-700 rounded text-gray-100 placeholder-gray-500 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+          className="flex-1 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-xs focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
         />
         <button
           type="button"
           onClick={addEntry}
           disabled={!newKey.trim() || !newValue.trim()}
-          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/30 disabled:text-gray-500 text-white text-xs font-medium rounded transition-colors"
+          className="px-3 py-1.5 bg-brand hover:bg-brand-light disabled:opacity-30 text-white text-xs font-medium rounded-lg transition-colors"
         >
           Add
         </button>

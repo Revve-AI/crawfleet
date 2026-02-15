@@ -1,28 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { getAuthEmail, isFleetAdmin, requireFleetAdmin } from "@/lib/auth";
 import { generateToken } from "@/lib/crypto";
 import { createTenantContainer, startContainer, removeContainer } from "@/lib/docker";
 import { createTenantAccessApp, deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { TenantCreateInput } from "@/types";
+import { apiError } from "@/lib/api-error";
 
 export async function GET() {
   try {
-    await requireAdmin();
+    const email = await getAuthEmail();
+    const where = isFleetAdmin(email) ? {} : { email };
     const tenants = await prisma.tenant.findMany({
+      where,
       orderBy: { createdAt: "desc" },
     });
     return NextResponse.json({ success: true, data: tenants });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed";
-    if (msg === "Unauthorized") return NextResponse.json({ error: msg }, { status: 401 });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e);
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requireFleetAdmin();
     const body: TenantCreateInput = await req.json();
 
     if (!body.email) {
@@ -50,14 +51,6 @@ export async function POST(req: NextRequest) {
         slug: body.slug,
         displayName: body.displayName,
         email: body.email,
-        allowAnthropic: body.allowAnthropic ?? true,
-        allowOpenAI: body.allowOpenAI ?? false,
-        allowGemini: body.allowGemini ?? false,
-        allowBrave: body.allowBrave ?? false,
-        allowElevenLabs: body.allowElevenLabs ?? false,
-        defaultModel: body.defaultModel ?? "anthropic/claude-sonnet-4-5",
-        execSecurity: body.execSecurity ?? "deny",
-        browserEnabled: body.browserEnabled ?? false,
         envOverrides: body.envOverrides ? JSON.stringify(body.envOverrides) : null,
         gatewayToken: generateToken(),
         accessAppId,
@@ -90,8 +83,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, data: updated }, { status: 201 });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed";
-    if (msg === "Unauthorized") return NextResponse.json({ error: msg }, { status: 401 });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e);
   }
 }

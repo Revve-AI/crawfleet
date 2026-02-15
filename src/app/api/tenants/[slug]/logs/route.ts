@@ -1,17 +1,15 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireTenantAccess } from "@/lib/tenant-access";
 import { getContainerLogs } from "@/lib/docker";
 
 type Params = { params: Promise<{ slug: string }> };
 
 export async function GET(req: NextRequest, { params }: Params) {
   try {
-    await requireAdmin();
     const { slug } = await params;
-    const tenant = await prisma.tenant.findUnique({ where: { slug } });
-    if (!tenant || !tenant.containerId) {
-      return new Response("Not found or no container", { status: 404 });
+    const tenant = await requireTenantAccess(slug);
+    if (!tenant.containerId) {
+      return new Response("No container", { status: 404 });
     }
 
     const tail = parseInt(req.nextUrl.searchParams.get("tail") || "100", 10);
@@ -37,7 +35,9 @@ export async function GET(req: NextRequest, { params }: Params) {
         Connection: "keep-alive",
       },
     });
-  } catch {
-    return new Response("Unauthorized", { status: 401 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed";
+    const status = msg === "Unauthorized" ? 401 : msg === "Forbidden" ? 403 : 500;
+    return new Response(msg, { status });
   }
 }

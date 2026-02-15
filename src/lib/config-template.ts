@@ -22,7 +22,7 @@ export function generateConfig(tenant: Tenant): object {
     agents: {
       defaults: {
         model: {
-          primary: tenant.defaultModel,
+          primary: "anthropic/claude-sonnet-4-5",
         },
         workspace: "/home/node/.openclaw/workspace",
         skipBootstrap: true,

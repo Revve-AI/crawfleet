@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireFleetAdmin } from "@/lib/auth";
+import { requireTenantAccess } from "@/lib/tenant-access";
 import { writeConfig, recreateContainer, removeContainer, removeTenantData } from "@/lib/docker";
 import { deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { TenantUpdateInput } from "@/types";
+import { apiError } from "@/lib/api-error";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -19,10 +21,8 @@ function overrideKeyNames(raw: string | null): string[] {
 
 export async function GET(_req: NextRequest, { params }: Params) {
   try {
-    await requireAdmin();
     const { slug } = await params;
-    const tenant = await prisma.tenant.findUnique({ where: { slug } });
-    if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const tenant = await requireTenantAccess(slug);
 
     // Strip raw override values, return key names only
     const { envOverrides, ...rest } = tenant;
@@ -31,28 +31,18 @@ export async function GET(_req: NextRequest, { params }: Params) {
       data: { ...rest, envOverrideKeys: overrideKeyNames(envOverrides) },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed";
-    if (msg === "Unauthorized") return NextResponse.json({ error: msg }, { status: 401 });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e);
   }
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {
-    await requireAdmin();
+    await requireFleetAdmin();
     const { slug } = await params;
     const { email: _email, envOverrides: incomingOverrides, ...body }: TenantUpdateInput & { email?: string } = await req.json();
 
     const tenant = await prisma.tenant.findUnique({ where: { slug } });
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    // Check if provider access changed (requires container restart)
-    const providerChanged =
-      (body.allowAnthropic !== undefined && body.allowAnthropic !== tenant.allowAnthropic) ||
-      (body.allowOpenAI !== undefined && body.allowOpenAI !== tenant.allowOpenAI) ||
-      (body.allowGemini !== undefined && body.allowGemini !== tenant.allowGemini) ||
-      (body.allowBrave !== undefined && body.allowBrave !== tenant.allowBrave) ||
-      (body.allowElevenLabs !== undefined && body.allowElevenLabs !== tenant.allowElevenLabs);
 
     // Merge env overrides: existing + incoming. Empty string value = delete that key.
     let envChanged = false;
@@ -70,8 +60,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       dbData.envOverrides = Object.keys(existing).length > 0 ? JSON.stringify(existing) : null;
     }
 
-    const needsRestart = providerChanged || envChanged;
-
     const updated = await prisma.tenant.update({
       where: { slug },
       data: dbData,
@@ -80,8 +68,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     // Always rewrite config
     await writeConfig(updated);
 
-    // If provider access or env overrides changed, recreate container
-    if (needsRestart && updated.containerId) {
+    // If env overrides changed, recreate container
+    if (envChanged && updated.containerId) {
       const newId = await recreateContainer(updated);
       await prisma.tenant.update({
         where: { slug },
@@ -92,7 +80,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     await prisma.auditLog.create({
       data: {
         tenantId: tenant.id,
-        action: needsRestart ? "tenant.provider_changed" : "config.updated",
+        action: envChanged ? "tenant.env_changed" : "config.updated",
         details: JSON.stringify({ ...body, ...(incomingOverrides ? { envOverrides: Object.keys(incomingOverrides) } : {}) }),
       },
     });
@@ -103,15 +91,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       data: { ...safeData, envOverrideKeys: overrideKeyNames(rawOverrides) },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed";
-    if (msg === "Unauthorized") return NextResponse.json({ error: msg }, { status: 401 });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e);
   }
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    await requireAdmin();
+    await requireFleetAdmin();
     const { slug } = await params;
     const tenant = await prisma.tenant.findUnique({ where: { slug } });
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -137,8 +123,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
     return NextResponse.json({ success: true });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed";
-    if (msg === "Unauthorized") return NextResponse.json({ error: msg }, { status: 401 });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e);
   }
 }

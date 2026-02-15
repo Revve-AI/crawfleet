@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireFleetAdmin } from "@/lib/auth";
+import { apiError } from "@/lib/api-error";
 
 function mask(value: string): string {
   if (value.length <= 8) return "****";
@@ -9,7 +10,7 @@ function mask(value: string): string {
 
 export async function GET() {
   try {
-    await requireAdmin();
+    await requireFleetAdmin();
 
     const settings = await prisma.globalSetting.findMany({
       orderBy: { key: "asc" },
@@ -23,15 +24,13 @@ export async function GET() {
 
     return NextResponse.json({ success: true, data });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed";
-    if (msg === "Unauthorized") return NextResponse.json({ error: msg }, { status: 401 });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e);
   }
 }
 
 export async function PUT(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requireFleetAdmin();
     const body: Record<string, string> = await req.json();
 
     for (const [key, value] of Object.entries(body)) {
@@ -50,8 +49,6 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed";
-    if (msg === "Unauthorized") return NextResponse.json({ error: msg }, { status: 401 });
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError(e);
   }
 }

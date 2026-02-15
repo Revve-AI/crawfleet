@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
 import NavShell from "@/components/NavShell";
 import FleetStats from "@/components/FleetStats";
 import TenantCard from "@/components/TenantCard";
@@ -7,7 +8,10 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
 
-  const tenants = await prisma.tenant.findMany({ orderBy: { createdAt: "desc" } });
+  const email = await getAuthEmail();
+  const admin = isFleetAdmin(email);
+  const where = admin ? {} : { email };
+  const tenants = await prisma.tenant.findMany({ where, orderBy: { createdAt: "desc" } });
 
   const stats = {
     total: tenants.length,
@@ -18,27 +22,36 @@ export default async function DashboardPage() {
   };
 
   return (
-    <NavShell>
+    <NavShell isAdmin={admin}>
       <div className="space-y-8">
         <div>
-          <h1 className="text-2xl font-bold">Fleet Overview</h1>
-          <p className="text-gray-500 mt-1">Manage your OpenClaw instances</p>
+          <h1 className="text-2xl font-bold tracking-tight">Fleet Overview</h1>
+          <p className="text-zinc-500 mt-1 text-sm">Manage your OpenClaw instances</p>
         </div>
 
         <FleetStats stats={stats} />
 
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Recent Tenants</h2>
-            <a
-              href="/tenants/new"
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              + New Tenant
-            </a>
+            <h2 className="text-lg font-semibold tracking-tight">Recent Tenants</h2>
+            {admin && (
+              <a
+                href="/tenants/new"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-light text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                New Tenant
+              </a>
+            )}
           </div>
           {tenants.length === 0 ? (
-            <p className="text-gray-500 text-center py-12">No tenants yet. Create one to get started.</p>
+            <div className="text-center py-16">
+              <p className="text-zinc-500">No tenants yet.</p>
+              <p className="text-zinc-600 text-sm mt-1">Create one to get started.</p>
+            </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {tenants.slice(0, 6).map((t) => (

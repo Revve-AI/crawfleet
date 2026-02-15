@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
+import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
 import { BASE_DOMAIN, FLEET_TLS } from "@/lib/constants";
 import NavShell from "@/components/NavShell";
+import StatusBadge from "@/components/StatusBadge";
 import TenantForm from "@/components/TenantForm";
 import TenantActions from "./TenantActions";
 
@@ -10,63 +12,98 @@ export const dynamic = "force-dynamic";
 export default async function TenantDetailPage({ params }: { params: Promise<{ slug: string }> }) {
 
   const { slug } = await params;
+  const email = await getAuthEmail();
+  const admin = isFleetAdmin(email);
   const tenant = await prisma.tenant.findUnique({ where: { slug } });
   if (!tenant) notFound();
+  if (!admin && tenant.email !== email) notFound();
 
   const scheme = FLEET_TLS ? "https" : "http";
   const instanceUrl = `${scheme}://${tenant.slug}.${BASE_DOMAIN}`;
   const openUrl = `${instanceUrl}/?token=${tenant.gatewayToken}`;
 
   return (
-    <NavShell>
-      <div className="space-y-8">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">{tenant.displayName}</h1>
-            <p className="text-gray-500 mt-1">{tenant.slug}</p>
+    <NavShell isAdmin={admin}>
+      <div className="space-y-6">
+        {/* Breadcrumb + Header */}
+        <div>
+          <a href="/tenants" className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors inline-flex items-center gap-1 mb-3">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+            Tenants
+          </a>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">{tenant.displayName}</h1>
+              <p className="text-zinc-500 mt-0.5 text-sm font-mono">{tenant.slug}</p>
+            </div>
+            <StatusBadge status={tenant.containerStatus} />
           </div>
-          <TenantActions slug={tenant.slug} status={tenant.containerStatus} />
         </div>
 
-        <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
-          <InfoCard label="Status" value={tenant.containerStatus} />
+        {/* Status strip */}
+        <div className="grid gap-3 grid-cols-2">
+          <InfoCard label="Container" value={tenant.containerStatus} />
           <InfoCard label="Health" value={tenant.lastHealthStatus || "unknown"} />
-          <InfoCard label="Model" value={tenant.defaultModel.split(":").pop() || tenant.defaultModel} />
-          <InfoCard label="Exec" value={tenant.execSecurity} />
         </div>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-300">Instance Access</h2>
+        {/* Instance Access */}
+        <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-5 space-y-4">
+          <h2 className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">Instance Access</h2>
+          <div className="space-y-2">
+            <div className="flex items-baseline gap-3 text-sm">
+              <span className="text-zinc-500 text-xs w-12 shrink-0">URL</span>
+              <code className="text-zinc-200 font-mono text-xs">{instanceUrl}</code>
+            </div>
+            <div className="flex items-baseline gap-3 text-sm">
+              <span className="text-zinc-500 text-xs w-12 shrink-0">Token</span>
+              <code className="text-zinc-200 font-mono text-xs break-all">{tenant.gatewayToken}</code>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
             <a
               href={openUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand hover:bg-brand-light text-white text-sm font-medium rounded-lg transition-colors"
             >
               Open Instance
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
+              </svg>
             </a>
-          </div>
-          <div className="text-sm space-y-1.5">
-            <div>
-              <span className="text-gray-500">URL: </span>
-              <span className="text-gray-200 font-mono">{instanceUrl}</span>
-            </div>
-            <div>
-              <span className="text-gray-500">Token: </span>
-              <span className="text-gray-200 font-mono text-xs break-all">{tenant.gatewayToken}</span>
-            </div>
+            <a
+              href={`/tenants/${tenant.slug}/shell`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors border border-zinc-700/60"
+            >
+              Shell
+            </a>
+            <a
+              href={`/tenants/${tenant.slug}/logs`}
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors border border-zinc-700/60"
+            >
+              Logs
+            </a>
           </div>
         </div>
 
-        <div>
-          <h2 className="text-lg font-semibold mb-4">Edit Configuration</h2>
-          <TenantForm mode="edit" initial={{
-            ...tenant,
-            email: tenant.email ?? undefined,
-            envOverrideKeys: Object.keys(tenant.envOverrides ? JSON.parse(tenant.envOverrides) : {}),
-          }} />
-        </div>
+        {/* Lifecycle controls */}
+        <TenantActions slug={tenant.slug} status={tenant.containerStatus} isAdmin={admin} />
+
+        {/* Configuration (admin only) */}
+        {admin && (
+          <div>
+            <h2 className="text-lg font-semibold mb-4 tracking-tight">Configuration</h2>
+            <TenantForm mode="edit" initial={{
+              ...tenant,
+              email: tenant.email ?? undefined,
+              envOverrideKeys: Object.keys(tenant.envOverrides ? JSON.parse(tenant.envOverrides) : {}),
+            }} />
+          </div>
+        )}
       </div>
     </NavShell>
   );
@@ -74,9 +111,9 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
 
 function InfoCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <p className="text-xs text-gray-500 uppercase tracking-wider">{label}</p>
-      <p className="text-sm font-medium mt-1 truncate">{value}</p>
+    <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-4">
+      <p className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">{label}</p>
+      <p className="text-sm font-medium mt-1 truncate text-zinc-200">{value}</p>
     </div>
   );
 }

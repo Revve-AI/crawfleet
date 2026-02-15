@@ -18,16 +18,7 @@ model Tenant {
   containerStatus String   @default("stopped")
   accessAppId     String?
 
-  allowAnthropic  Boolean  @default(true)
-  allowOpenAI     Boolean  @default(false)
-  allowGemini     Boolean  @default(false)
-  allowBrave      Boolean  @default(false)
-  allowElevenLabs Boolean  @default(false)
-
-  defaultModel    String   @default("anthropic/claude-sonnet-4-5")
   envOverrides    String?
-  execSecurity    String   @default("deny")
-  browserEnabled  Boolean  @default(false)
 
   gatewayToken    String
 

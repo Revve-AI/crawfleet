@@ -55,16 +55,16 @@ export default function SettingsForm() {
   return (
     <div className="space-y-4">
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm">
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
           {error}
         </div>
       )}
 
       {settings.map((s) => (
-        <div key={s.key} className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 space-y-3">
+        <div key={s.key} className="bg-zinc-800/40 border border-zinc-700/50 rounded-lg p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-200 font-mono">{s.key}</span>
-            <span className="text-xs text-gray-500 font-mono">{s.masked}</span>
+            <span className="text-sm font-medium text-zinc-200 font-mono">{s.key}</span>
+            <span className="text-xs text-zinc-500 font-mono">{s.masked}</span>
           </div>
           <div className="flex gap-2">
             <input
@@ -72,19 +72,19 @@ export default function SettingsForm() {
               value={editValues[s.key] || ""}
               onChange={(e) => setEditValues((prev) => ({ ...prev, [s.key]: e.target.value }))}
               placeholder="Enter new value to replace"
-              className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+              className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
             />
             <button
               onClick={() => save(s.key, editValues[s.key] || "")}
               disabled={!editValues[s.key] || saving === s.key}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/30 disabled:text-gray-500 text-white text-sm font-medium rounded-lg transition-colors"
+              className="px-3 py-1.5 bg-brand hover:bg-brand-light disabled:opacity-30 text-white text-sm font-medium rounded-lg transition-colors"
             >
               {saving === s.key ? "..." : "Save"}
             </button>
             <button
               onClick={() => save(s.key, "")}
               disabled={saving === s.key}
-              className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 disabled:opacity-50 text-red-400 text-sm rounded-lg transition-colors"
+              className="px-3 py-1.5 text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 text-sm rounded-lg transition-all disabled:opacity-50"
             >
               Delete
             </button>
@@ -92,27 +92,27 @@ export default function SettingsForm() {
         </div>
       ))}
 
-      <div className="border border-dashed border-gray-700 rounded-lg p-4 space-y-3">
-        <p className="text-sm text-gray-400">Add new variable</p>
+      <div className="border border-dashed border-zinc-700/60 rounded-lg p-4 space-y-3">
+        <p className="text-sm text-zinc-400">Add new variable</p>
         <div className="flex gap-2">
           <input
             type="text"
             value={newKey}
             onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
             placeholder="KEY_NAME"
-            className="w-48 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 placeholder-gray-500 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+            className="w-48 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
           />
           <input
             type="password"
             value={newValue}
             onChange={(e) => setNewValue(e.target.value)}
             placeholder="Value"
-            className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
+            className="flex-1 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors"
           />
           <button
             onClick={handleAdd}
             disabled={!newKey.trim() || !newValue.trim() || saving !== null}
-            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/30 disabled:text-gray-500 text-white text-sm font-medium rounded-lg transition-colors"
+            className="px-4 py-1.5 bg-brand hover:bg-brand-light disabled:opacity-30 text-white text-sm font-medium rounded-lg transition-colors"
           >
             Add
           </button>
@@ -120,7 +120,7 @@ export default function SettingsForm() {
       </div>
 
       {settings.length === 0 && (
-        <p className="text-sm text-gray-500">No variables configured. Environment variables from .env are still used as fallback.</p>
+        <p className="text-sm text-zinc-500">No variables configured. Environment variables from .env are still used as fallback.</p>
       )}
     </div>
   );

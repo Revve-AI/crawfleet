@@ -41,10 +41,10 @@ async function buildEnvVars(tenant: Tenant): Promise<string[]> {
     `OPENCLAW_GATEWAY_TOKEN=${tenant.gatewayToken}`,
   ];
 
-  if (tenant.allowBrave && resolved.BRAVE_API_KEY) {
+  if (resolved.BRAVE_API_KEY) {
     envs.push(`BRAVE_API_KEY=${resolved.BRAVE_API_KEY}`);
   }
-  if (tenant.allowElevenLabs && resolved.ELEVENLABS_API_KEY) {
+  if (resolved.ELEVENLABS_API_KEY) {
     envs.push(`ELEVENLABS_API_KEY=${resolved.ELEVENLABS_API_KEY}`);
   }
 
@@ -76,13 +76,13 @@ async function writeAuthProfiles(tenant: Tenant, dir: string): Promise<void> {
   const resolved = await resolveEnvBatch(tenant, ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"]);
   const profiles: Record<string, { type: string; provider: string; key: string }> = {};
 
-  if (tenant.allowAnthropic && resolved.ANTHROPIC_API_KEY) {
+  if (resolved.ANTHROPIC_API_KEY) {
     profiles["anthropic:default"] = { type: "api_key", provider: "anthropic", key: resolved.ANTHROPIC_API_KEY };
   }
-  if (tenant.allowOpenAI && resolved.OPENAI_API_KEY) {
+  if (resolved.OPENAI_API_KEY) {
     profiles["openai:default"] = { type: "api_key", provider: "openai", key: resolved.OPENAI_API_KEY };
   }
-  if (tenant.allowGemini && resolved.GEMINI_API_KEY) {
+  if (resolved.GEMINI_API_KEY) {
     profiles["google:default"] = { type: "api_key", provider: "google", key: resolved.GEMINI_API_KEY };
   }
 
@@ -204,6 +204,19 @@ export async function recreateContainer(tenant: Tenant): Promise<string> {
   const newId = await createTenantContainer(tenant);
   await startContainer(newId);
   return newId;
+}
+
+export async function execShell(containerId: string) {
+  const container = docker.getContainer(containerId);
+  const exec = await container.exec({
+    Cmd: ["bash"],
+    AttachStdin: true,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: true,
+  });
+  const stream = await exec.start({ hijack: true, stdin: true, Tty: true });
+  return { exec, stream };
 }
 
 export async function removeTenantData(slug: string): Promise<void> {

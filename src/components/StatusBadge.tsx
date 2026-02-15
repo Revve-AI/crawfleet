@@ -1,19 +1,24 @@
 "use client";
 
-const colors: Record<string, string> = {
-  running: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  stopped: "bg-gray-500/20 text-gray-400 border-gray-500/30",
-  error: "bg-red-500/20 text-red-400 border-red-500/30",
-  healthy: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  unhealthy: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-  unknown: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+const styles: Record<string, { bg: string; text: string; dot: string }> = {
+  running: { bg: "bg-emerald-500/15 border-emerald-500/25", text: "text-emerald-400", dot: "bg-emerald-400" },
+  stopped: { bg: "bg-zinc-500/15 border-zinc-500/25", text: "text-zinc-400", dot: "bg-zinc-500" },
+  error: { bg: "bg-red-500/15 border-red-500/25", text: "text-red-400", dot: "bg-red-400" },
+  healthy: { bg: "bg-emerald-500/15 border-emerald-500/25", text: "text-emerald-400", dot: "bg-emerald-400" },
+  unhealthy: { bg: "bg-amber-500/15 border-amber-500/25", text: "text-amber-400", dot: "bg-amber-400" },
+  unknown: { bg: "bg-zinc-500/15 border-zinc-500/25", text: "text-zinc-500", dot: "bg-zinc-500" },
 };
 
 export default function StatusBadge({ status }: { status: string }) {
-  const cls = colors[status] || colors.unknown;
+  const s = styles[status] || styles.unknown;
+  const pulse = status === "running" || status === "healthy";
+
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${cls}`}>
-      <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${status === "running" || status === "healthy" ? "bg-emerald-400" : status === "error" || status === "unhealthy" ? "bg-red-400" : "bg-gray-400"}`} />
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${s.bg} ${s.text}`}>
+      <span className="relative flex h-1.5 w-1.5">
+        {pulse && <span className={`absolute inset-0 rounded-full ${s.dot} animate-ping opacity-40`} />}
+        <span className={`relative rounded-full h-1.5 w-1.5 ${s.dot}`} />
+      </span>
       {status}
     </span>
   );

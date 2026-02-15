@@ -6,41 +6,35 @@ import StatusBadge from "./StatusBadge";
 interface Tenant {
   slug: string;
   displayName: string;
+  email?: string | null;
   containerStatus: string;
   lastHealthStatus: string | null;
-  defaultModel: string;
-  allowAnthropic: boolean;
-  allowOpenAI: boolean;
-  allowGemini: boolean;
 }
 
+const accentMap: Record<string, string> = {
+  running: "group-hover:border-l-emerald-500",
+  stopped: "group-hover:border-l-zinc-600",
+  error: "group-hover:border-l-red-500",
+};
+
 export default function TenantCard({ tenant }: { tenant: Tenant }) {
-  const providers = [
-    tenant.allowAnthropic && "Anthropic",
-    tenant.allowOpenAI && "OpenAI",
-    tenant.allowGemini && "Gemini",
-  ].filter(Boolean);
+  const accent = accentMap[tenant.containerStatus] || accentMap.stopped;
 
   return (
     <Link
       href={`/tenants/${tenant.slug}`}
-      className="block bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-700 transition-colors"
+      className={`group block bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-5 hover:border-zinc-700/80 hover:bg-zinc-900 transition-all border-l-[3px] border-l-transparent ${accent}`}
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="font-semibold text-lg">{tenant.displayName}</h3>
-          <p className="text-sm text-gray-500 mt-0.5">{tenant.slug}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-semibold text-zinc-100 truncate">{tenant.displayName}</h3>
+          <p className="text-sm text-zinc-500 mt-0.5 truncate">
+            <span className="font-mono text-xs">{tenant.slug}</span>
+            {tenant.email && <span className="text-zinc-600"> &middot; {tenant.email}</span>}
+          </p>
         </div>
         <StatusBadge status={tenant.containerStatus} />
       </div>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {providers.map((p) => (
-          <span key={p as string} className="px-2 py-0.5 text-xs rounded bg-gray-800 text-gray-400">
-            {p}
-          </span>
-        ))}
-      </div>
-      <p className="mt-2 text-xs text-gray-600 font-mono truncate">{tenant.defaultModel}</p>
     </Link>
   );
 }

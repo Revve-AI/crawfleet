@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export default function TenantActions({ slug, status }: { slug: string; status: string }) {
+export default function TenantActions({ slug, status, isAdmin }: { slug: string; status: string; isAdmin: boolean }) {
   const router = useRouter();
   const [loading, setLoading] = useState("");
 
@@ -26,44 +26,48 @@ export default function TenantActions({ slug, status }: { slug: string; status: 
   }
 
   return (
-    <div className="flex gap-2">
-      {status === "running" ? (
+    <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium mr-2">Controls</span>
+
+        {status === "running" ? (
+          <button
+            onClick={() => action("stop")}
+            disabled={!!loading}
+            className="px-3.5 py-2 text-sm bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-lg hover:bg-amber-500/20 transition-colors disabled:opacity-50 font-medium"
+          >
+            {loading === "stop" ? "Stopping..." : "Stop"}
+          </button>
+        ) : (
+          <button
+            onClick={() => action("start")}
+            disabled={!!loading}
+            className="px-3.5 py-2 text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg hover:bg-emerald-500/20 transition-colors disabled:opacity-50 font-medium"
+          >
+            {loading === "start" ? "Starting..." : "Start"}
+          </button>
+        )}
+
         <button
-          onClick={() => action("stop")}
+          onClick={() => action("restart")}
           disabled={!!loading}
-          className="px-3 py-1.5 text-sm bg-amber-600/20 text-amber-400 border border-amber-600/30 rounded-lg hover:bg-amber-600/30 transition-colors disabled:opacity-50"
+          className="px-3.5 py-2 text-sm bg-zinc-800 text-zinc-300 border border-zinc-700/60 rounded-lg hover:bg-zinc-700 transition-colors disabled:opacity-50 font-medium"
         >
-          {loading === "stop" ? "..." : "Stop"}
+          {loading === "restart" ? "Restarting..." : "Restart"}
         </button>
-      ) : (
-        <button
-          onClick={() => action("start")}
-          disabled={!!loading}
-          className="px-3 py-1.5 text-sm bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 rounded-lg hover:bg-emerald-600/30 transition-colors disabled:opacity-50"
-        >
-          {loading === "start" ? "..." : "Start"}
-        </button>
-      )}
-      <button
-        onClick={() => action("restart")}
-        disabled={!!loading}
-        className="px-3 py-1.5 text-sm bg-blue-600/20 text-blue-400 border border-blue-600/30 rounded-lg hover:bg-blue-600/30 transition-colors disabled:opacity-50"
-      >
-        {loading === "restart" ? "..." : "Restart"}
-      </button>
-      <a
-        href={`/tenants/${slug}/logs`}
-        className="px-3 py-1.5 text-sm bg-gray-800 text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-700 transition-colors"
-      >
-        Logs
-      </a>
-      <button
-        onClick={handleDelete}
-        disabled={!!loading}
-        className="px-3 py-1.5 text-sm bg-red-600/20 text-red-400 border border-red-600/30 rounded-lg hover:bg-red-600/30 transition-colors disabled:opacity-50"
-      >
-        {loading === "delete" ? "..." : "Delete"}
-      </button>
+
+        <div className="flex-1" />
+
+        {isAdmin && (
+          <button
+            onClick={handleDelete}
+            disabled={!!loading}
+            className="px-3.5 py-2 text-sm text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 rounded-lg transition-all disabled:opacity-50"
+          >
+            {loading === "delete" ? "Deleting..." : "Delete"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
