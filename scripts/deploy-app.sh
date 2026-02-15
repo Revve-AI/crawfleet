@@ -55,40 +55,8 @@ step_build() {
 
 step_openclaw() {
   echo "=== Build custom OpenClaw image (from source) ==="
-  local clone_dir="${OPENCLAW_CLONE_DIR:-/tmp/openclaw-build}"
-  local repo_url="${OPENCLAW_REPO_URL:-https://github.com/openclaw/openclaw.git}"
-  local tag="${OPENCLAW_TAG:?OPENCLAW_TAG is required (e.g. v2026.2.14)}"
-  local img_tag="revve-${tag}"
-
-  if [ -d "$clone_dir/.git" ]; then
-    echo "Fetching tags in $clone_dir ..."
-    git -C "$clone_dir" fetch --tags --force
-  else
-    echo "Cloning OpenClaw repo into $clone_dir ..."
-    git clone "$repo_url" "$clone_dir"
-  fi
-
-  git -C "$clone_dir" checkout "tags/${tag}"
-
-  # Replace upstream Dockerfile with our custom one (baked-in binaries)
-  cp "$PROJECT_DIR/openclaw.Dockerfile" "$clone_dir/Dockerfile"
-
-  cd "$clone_dir"
-  local apt_packages="${OPENCLAW_DOCKER_APT_PACKAGES:-git curl wget jq socat python3 python3-pip ffmpeg build-essential procps}"
-  docker build --platform linux/amd64 \
-    --build-arg OPENCLAW_DOCKER_APT_PACKAGES="$apt_packages" \
-    -t "openclaw:${img_tag}" .
-
-  # Tag and push to our registry
-  gcloud auth configure-docker "$REGISTRY_HOST" --quiet
-  local remote_img="${DEPLOY_REGISTRY}/openclaw:${img_tag}"
-  docker tag "openclaw:${img_tag}" "$remote_img"
-  docker push "$remote_img"
-  echo ""
-  echo "Pushed $remote_img"
-  echo "Server .env OPENCLAW_IMAGE must be set to: $remote_img"
-
-  cd "$PROJECT_DIR"
+  "$SCRIPT_DIR/build-openclaw.sh" "${OPENCLAW_TAG:?OPENCLAW_TAG is required (e.g. v2026.2.14)}" "$DEPLOY_REGISTRY"
+  echo "Server .env OPENCLAW_IMAGE must be set to: ${DEPLOY_REGISTRY}/openclaw:revve-${OPENCLAW_TAG}"
 }
 
 step_sync() {
