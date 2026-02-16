@@ -1,31 +1,27 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFleetAdmin } from "@/lib/auth";
-import { recreateContainer } from "@/lib/docker";
-import { apiError } from "@/lib/api-error";
+import { deployContainer } from "@/lib/docker";
+import { sseResponse, type SSESend } from "@/lib/sse";
 
 type Params = { params: Promise<{ slug: string }> };
 
 export async function POST(req: NextRequest, { params }: Params) {
-  try {
+  return sseResponse(async (send: SSESend) => {
     await requireFleetAdmin();
     const { slug } = await params;
 
     const tenant = await prisma.tenant.findUnique({ where: { slug } });
-    if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    if (!tenant.containerId) {
-      return NextResponse.json({ error: "No container" }, { status: 404 });
-    }
+    if (!tenant) throw new Error("Not found");
+    if (!tenant.containerId) throw new Error("No container");
 
     const body = await req.json().catch(() => ({}));
     const dbData: Record<string, unknown> = {};
 
-    // Optional image override — persisted so future recreations use it too
     if (body.image && typeof body.image === "string") {
       dbData.image = body.image.trim();
     }
 
-    // Optional env override merge (same logic as PATCH)
     if (body.envOverrides && typeof body.envOverrides === "object") {
       const existing: Record<string, string> = tenant.envOverrides
         ? JSON.parse(tenant.envOverrides)
@@ -41,13 +37,17 @@ export async function POST(req: NextRequest, { params }: Params) {
         Object.keys(existing).length > 0 ? JSON.stringify(existing) : null;
     }
 
-    // Persist changes before recreate so the container picks them up
     const updated =
       Object.keys(dbData).length > 0
         ? await prisma.tenant.update({ where: { slug }, data: dbData })
         : tenant;
 
-    const newId = await recreateContainer(updated);
+    send("status", { step: "Starting deploy" });
+
+    const newId = await deployContainer(updated, (step) => {
+      send("status", { step });
+    });
+
     await prisma.tenant.update({
       where: { slug },
       data: { containerId: newId, containerStatus: "running" },
@@ -64,8 +64,6 @@ export async function POST(req: NextRequest, { params }: Params) {
       },
     });
 
-    return NextResponse.json({ success: true, containerId: newId });
-  } catch (e) {
-    return apiError(e);
-  }
+    send("done", { containerId: newId });
+  });
 }

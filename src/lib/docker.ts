@@ -2,8 +2,7 @@ import Docker from "dockerode";
 import { Tenant } from "@prisma/client";
 import path from "path";
 import fs from "fs/promises";
-import { generateConfig } from "./config-template";
-import { resolveEnvBatch } from "./key-resolver";
+import { resolveAllEnv } from "./key-resolver";
 import {
   OPENCLAW_IMAGE,
   FLEET_NETWORK,
@@ -23,16 +22,12 @@ function containerName(slug: string): string {
   return `fleet-${slug}`;
 }
 
-function tenantDataDir(slug: string): string {
-  return path.resolve(DATA_DIR, "tenants", slug, ".openclaw");
-}
-
 function tenantHostDir(slug: string): string {
   return path.resolve(HOST_DATA_DIR, "tenants", slug, ".openclaw");
 }
 
 async function buildEnvVars(tenant: Tenant): Promise<string[]> {
-  const resolved = await resolveEnvBatch(tenant, ["BRAVE_API_KEY", "ELEVENLABS_API_KEY"]);
+  const resolved = await resolveAllEnv(tenant);
 
   const envs: string[] = [
     "HOME=/home/node",
@@ -41,11 +36,8 @@ async function buildEnvVars(tenant: Tenant): Promise<string[]> {
     `OPENCLAW_GATEWAY_TOKEN=${tenant.gatewayToken}`,
   ];
 
-  if (resolved.BRAVE_API_KEY) {
-    envs.push(`BRAVE_API_KEY=${resolved.BRAVE_API_KEY}`);
-  }
-  if (resolved.ELEVENLABS_API_KEY) {
-    envs.push(`ELEVENLABS_API_KEY=${resolved.ELEVENLABS_API_KEY}`);
+  for (const [key, value] of Object.entries(resolved)) {
+    envs.push(`${key}=${value}`);
   }
 
   return envs;
@@ -57,6 +49,9 @@ function buildLabels(slug: string): Record<string, string> {
     "traefik.enable": "true",
     [`traefik.http.routers.${slug}.rule`]: `Host(\`${slug}.${BASE_DOMAIN}\`)`,
     [`traefik.http.services.${slug}.loadbalancer.server.port`]: String(CONTAINER_PORT),
+    [`traefik.http.services.${slug}.loadbalancer.healthCheck.path`]: "/",
+    [`traefik.http.services.${slug}.loadbalancer.healthCheck.interval`]: "5s",
+    [`traefik.http.services.${slug}.loadbalancer.healthCheck.timeout`]: "3s",
   };
 
   if (FLEET_TLS) {
@@ -69,47 +64,15 @@ function buildLabels(slug: string): Record<string, string> {
   return labels;
 }
 
-async function writeAuthProfiles(tenant: Tenant, dir: string): Promise<void> {
-  const profileDir = path.join(dir, "agents", "main", "agent");
-  await fs.mkdir(profileDir, { recursive: true });
-
-  const resolved = await resolveEnvBatch(tenant, ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"]);
-  const profiles: Record<string, { type: string; provider: string; key: string }> = {};
-
-  if (resolved.ANTHROPIC_API_KEY) {
-    profiles["anthropic:default"] = { type: "api_key", provider: "anthropic", key: resolved.ANTHROPIC_API_KEY };
-  }
-  if (resolved.OPENAI_API_KEY) {
-    profiles["openai:default"] = { type: "api_key", provider: "openai", key: resolved.OPENAI_API_KEY };
-  }
-  if (resolved.GEMINI_API_KEY) {
-    profiles["google:default"] = { type: "api_key", provider: "google", key: resolved.GEMINI_API_KEY };
-  }
-
-  await fs.writeFile(
-    path.join(profileDir, "auth-profiles.json"),
-    JSON.stringify({ version: 1, profiles }, null, 2),
-  );
-}
-
-export async function writeConfig(tenant: Tenant): Promise<void> {
-  const dir = tenantDataDir(tenant.slug);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.mkdir(path.join(dir, "workspace"), { recursive: true });
-  await fs.mkdir(path.join(dir, "sessions"), { recursive: true });
-
-  const config = generateConfig(tenant);
-  await fs.writeFile(path.join(dir, "openclaw.json"), JSON.stringify(config, null, 2));
-  await writeAuthProfiles(tenant, dir);
-}
-
-export async function createTenantContainer(tenant: Tenant): Promise<string> {
-  await writeConfig(tenant);
-
+export async function createTenantContainer(tenant: Tenant, name?: string): Promise<string> {
   const hostDir = tenantHostDir(tenant.slug);
 
+  // Create minimal directory structure (matching docker-setup.sh)
+  await fs.mkdir(hostDir, { recursive: true });
+  await fs.mkdir(path.join(hostDir, "workspace"), { recursive: true });
+
   const container = await docker.createContainer({
-    name: containerName(tenant.slug),
+    name: name ?? containerName(tenant.slug),
     Image: tenant.image || OPENCLAW_IMAGE,
     Cmd: ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"],
     Env: await buildEnvVars(tenant),
@@ -197,12 +160,75 @@ export async function getContainerLogs(
   }) as unknown as NodeJS.ReadableStream;
 }
 
-export async function recreateContainer(tenant: Tenant): Promise<string> {
+export async function waitForHealthy(
+  containerId: string,
+  timeoutMs = 120_000,
+  onStatus?: (step: string) => void,
+): Promise<boolean> {
+  const interval = 3_000;
+  const deadline = Date.now() + timeoutMs;
+  let checks = 0;
+  while (Date.now() < deadline) {
+    const health = await getContainerHealth(containerId);
+    checks++;
+    if (health === "healthy") return true;
+    if (health === "unhealthy") return false;
+    const elapsed = Math.round((Date.now() - (deadline - timeoutMs)) / 1000);
+    onStatus?.(`Waiting for health check (${elapsed}s, status: ${health})`);
+    await new Promise((r) => setTimeout(r, interval));
+  }
+  return false;
+}
+
+async function tryRemoveByName(name: string): Promise<void> {
+  try {
+    const c = docker.getContainer(name);
+    await c.stop({ t: 5 }).catch(() => {});
+    await c.remove({ force: true });
+  } catch {
+    // doesn't exist — fine
+  }
+}
+
+export async function deployContainer(
+  tenant: Tenant,
+  onStatus?: (step: string) => void,
+): Promise<string> {
+  const slug = tenant.slug;
+  const nextName = `fleet-${slug}-next`;
+  const canonicalName = containerName(slug);
+  const report = onStatus ?? (() => {});
+
+  // 1. Clean up any leftover staging container from a previous failed deploy
+  report("Cleaning up previous staging container");
+  await tryRemoveByName(nextName);
+
+  // 2. Create and start the new container alongside the old one
+  report("Creating new container");
+  const newId = await createTenantContainer(tenant, nextName);
+  report("Starting new container");
+  await startContainer(newId);
+
+  // 3. Wait for the new container to become healthy
+  report("Waiting for health check");
+  const healthy = await waitForHealthy(newId, 120_000, (s) => report(s));
+
+  if (!healthy) {
+    // Rollback: remove the new container, old one stays untouched
+    report("Health check failed — rolling back");
+    await tryRemoveByName(nextName);
+    throw new Error(`Deploy failed: new container for ${slug} did not become healthy`);
+  }
+
+  // 4. Swap: remove old, rename new → canonical
+  report("Swapping containers");
   if (tenant.containerId) {
     await removeContainer(tenant.containerId);
   }
-  const newId = await createTenantContainer(tenant);
-  await startContainer(newId);
+  const newContainer = docker.getContainer(newId);
+  await newContainer.rename({ name: canonicalName });
+
+  report("Done");
   return newId;
 }
 

@@ -53,39 +53,6 @@ step_build() {
   echo "Pushed $IMAGE"
 }
 
-step_openclaw() {
-  echo "=== Build custom OpenClaw image (from source) ==="
-  "$SCRIPT_DIR/build-openclaw.sh" "${OPENCLAW_TAG:?OPENCLAW_TAG is required (e.g. v2026.2.14)}" "$DEPLOY_REGISTRY"
-  echo "Server .env OPENCLAW_IMAGE must be set to: ${DEPLOY_REGISTRY}/openclaw:revve-${OPENCLAW_TAG}"
-}
-
-step_sync() {
-  echo "=== Step 3: Sync compose and config ==="
-  cd "$PROJECT_DIR"
-  rsync -avz \
-    --include='docker-compose.yml' \
-    --include='prisma/***' \
-    --exclude='*' \
-    -e "ssh -o ProxyCommand='cloudflared access ssh --hostname %h'" \
-    ./ "${REMOTE}:~/openclaw-fleet/"
-
-  # Seed .env on first deploy only
-  env_check=$(remote "test -f ~/openclaw-fleet/.env && echo ENV_EXISTS || echo ENV_MISSING")
-  if echo "$env_check" | grep -q "ENV_MISSING"; then
-    echo "First deploy — seeding .env on server"
-    rsync -avz \
-      --include='.env' \
-      --exclude='*' \
-      -e "ssh -o ProxyCommand='cloudflared access ssh --hostname %h'" \
-      ./ "${REMOTE}:~/openclaw-fleet/"
-    echo ""
-    echo "WARNING: Review production .env on server and update:"
-    echo "  - BASE_DOMAIN, SESSION_SECRET, CLOUDFLARE_TEAM_DOMAIN, CF_ACCESS_AUD, API keys"
-  else
-    echo ".env already exists on server (not overwritten)"
-  fi
-}
-
 step_auth() {
   echo "=== Step 4: Configure server Docker auth ==="
   result=$(remote "gcloud auth configure-docker $REGISTRY_HOST --quiet 2>/dev/null && echo GCLOUD_OK || echo GCLOUD_MISSING")
@@ -172,12 +139,10 @@ STEP="${1:-all}"
 case "$STEP" in
   docker)   step_docker ;;
   build)    step_build ;;
-  openclaw) step_openclaw ;;
-  sync)     step_sync ;;
   auth)     step_auth ;;
   network)  step_network ;;
   tunnel)   step_tunnel ;;
-  deploy)   step_build; step_sync; step_deploy; step_verify; step_report ;;
+  deploy)   step_build; step_deploy; step_verify; step_report ;;
   start)    step_deploy ;;
   verify)   step_verify ;;
   all)
@@ -186,7 +151,6 @@ case "$STEP" in
     echo ""
     step_docker
     step_build
-    step_sync
     step_auth
     step_network
     step_tunnel
@@ -195,14 +159,12 @@ case "$STEP" in
     step_report
     ;;
   *)
-    echo "Usage: $0 [docker|build|openclaw|sync|auth|network|tunnel|deploy|start|verify|all]"
+    echo "Usage: $0 [docker|build|auth|network|tunnel|deploy|start|verify|all]"
     echo ""
     echo "  all      — run all steps (default)"
     echo "  build    — build dashboard image and push to registry"
-    echo "  openclaw — build custom OpenClaw image and push to registry"
-    echo "  deploy   — build + sync + pull + restart (typical redeploy)"
+    echo "  deploy   — build + pull + restart (typical redeploy)"
     echo "  start    — just pull and restart on server"
-    echo "  sync     — sync compose/prisma files to server"
     echo "  verify   — check if dashboard is running"
     echo ""
     echo "First-time setup steps:"

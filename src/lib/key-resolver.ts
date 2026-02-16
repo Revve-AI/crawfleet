@@ -46,3 +46,22 @@ export async function resolveEnvBatch(tenant: Tenant, keys: string[]): Promise<R
   }
   return result;
 }
+
+/**
+ * Resolve ALL env vars for a tenant: merges tenant overrides + all GlobalSettings.
+ * Tenant overrides win over global settings.
+ */
+export async function resolveAllEnv(tenant: Tenant): Promise<Record<string, string>> {
+  const overrides = parseTenantOverrides(tenant);
+  const globals = await prisma.globalSetting.findMany();
+
+  const result: Record<string, string> = {};
+  for (const g of globals) {
+    result[g.key] = g.value;
+  }
+  // Tenant overrides win
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v) result[k] = v;
+  }
+  return result;
+}
