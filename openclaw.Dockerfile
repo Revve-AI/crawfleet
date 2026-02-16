@@ -20,7 +20,7 @@ RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
 
 # agent-browser (vercel-labs/agent-browser)
 RUN npm install -g agent-browser && agent-browser install --with-deps
-
+RUN agent-browser install --with-deps
 # Homebrew
 RUN mkdir -p /home/linuxbrew/.linuxbrew && chown -R node:node /home/linuxbrew
 USER node
