@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
-import { BASE_DOMAIN, FLEET_TLS } from "@/lib/constants";
+import { BASE_DOMAIN, FLEET_TLS, OPENCLAW_IMAGE } from "@/lib/constants";
 import NavShell from "@/components/NavShell";
 import StatusBadge from "@/components/StatusBadge";
 import TenantForm from "@/components/TenantForm";
@@ -91,7 +91,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
         </div>
 
         {/* Lifecycle controls */}
-        <TenantActions slug={tenant.slug} status={tenant.containerStatus} isAdmin={admin} />
+        <TenantActions slug={tenant.slug} status={tenant.containerStatus} isAdmin={admin} currentImage={tenant.image} defaultImage={OPENCLAW_IMAGE} />
 
         {/* Configuration (admin only) */}
         {admin && (

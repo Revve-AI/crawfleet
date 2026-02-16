@@ -3,9 +3,23 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export default function TenantActions({ slug, status, isAdmin }: { slug: string; status: string; isAdmin: boolean }) {
+export default function TenantActions({
+  slug,
+  status,
+  isAdmin,
+  currentImage,
+  defaultImage,
+}: {
+  slug: string;
+  status: string;
+  isAdmin: boolean;
+  currentImage: string | null;
+  defaultImage: string;
+}) {
   const router = useRouter();
   const [loading, setLoading] = useState("");
+  const [showDeploy, setShowDeploy] = useState(false);
+  const [image, setImage] = useState(currentImage || "");
 
   async function action(act: string) {
     setLoading(act);
@@ -14,6 +28,26 @@ export default function TenantActions({ slug, status, isAdmin }: { slug: string;
       router.refresh();
     } finally {
       setLoading("");
+    }
+  }
+
+  async function handleDeploy() {
+    const body: Record<string, unknown> = {};
+    const trimmed = image.trim();
+    if (trimmed && trimmed !== currentImage) {
+      body.image = trimmed;
+    }
+    setLoading("deploy");
+    try {
+      await fetch(`/api/tenants/${slug}/deploy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      router.refresh();
+    } finally {
+      setLoading("");
+      setShowDeploy(false);
     }
   }
 
@@ -26,7 +60,7 @@ export default function TenantActions({ slug, status, isAdmin }: { slug: string;
   }
 
   return (
-    <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-4">
+    <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium mr-2">Controls</span>
 
@@ -58,11 +92,11 @@ export default function TenantActions({ slug, status, isAdmin }: { slug: string;
 
         {isAdmin && (
           <button
-            onClick={() => action("deploy")}
+            onClick={() => setShowDeploy(!showDeploy)}
             disabled={!!loading}
             className="px-3.5 py-2 text-sm bg-brand/10 text-brand-light border border-brand/20 rounded-lg hover:bg-brand/20 transition-colors disabled:opacity-50 font-medium"
           >
-            {loading === "deploy" ? "Deploying..." : "Deploy"}
+            Deploy
           </button>
         )}
 
@@ -78,6 +112,42 @@ export default function TenantActions({ slug, status, isAdmin }: { slug: string;
           </button>
         )}
       </div>
+
+      {showDeploy && (
+        <div className="border-t border-zinc-800/60 pt-3 space-y-3">
+          <div>
+            <label className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium block mb-1.5">
+              Docker Image
+            </label>
+            <input
+              type="text"
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
+              placeholder={defaultImage}
+              className="w-full px-3 py-2 text-sm font-mono bg-zinc-950 border border-zinc-700/60 rounded-lg text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-brand/50"
+            />
+            <p className="text-[11px] text-zinc-600 mt-1">
+              Leave empty to use default: {defaultImage}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleDeploy}
+              disabled={!!loading}
+              className="px-4 py-2 text-sm bg-brand hover:bg-brand-light text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              {loading === "deploy" ? "Deploying..." : "Recreate Container"}
+            </button>
+            <button
+              onClick={() => setShowDeploy(false)}
+              disabled={!!loading}
+              className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
