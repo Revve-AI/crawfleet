@@ -22,6 +22,10 @@ function containerName(slug: string): string {
   return `fleet-${slug}`;
 }
 
+function tenantDataDir(slug: string): string {
+  return path.resolve(DATA_DIR, "tenants", slug, ".openclaw");
+}
+
 function tenantHostDir(slug: string): string {
   return path.resolve(HOST_DATA_DIR, "tenants", slug, ".openclaw");
 }
@@ -65,14 +69,20 @@ function buildLabels(slug: string): Record<string, string> {
 }
 
 export async function createTenantContainer(tenant: Tenant, name?: string): Promise<string> {
+  const dataDir = tenantDataDir(tenant.slug);
   const hostDir = tenantHostDir(tenant.slug);
+  const cName = name ?? containerName(tenant.slug);
+
+  // Remove any leftover container with the same name (e.g. from incomplete delete)
+  await tryRemoveByName(cName);
 
   // Create minimal directory structure (matching docker-setup.sh)
-  await fs.mkdir(hostDir, { recursive: true });
-  await fs.mkdir(path.join(hostDir, "workspace"), { recursive: true });
+  // Use dataDir (inside dashboard container) for fs operations
+  await fs.mkdir(dataDir, { recursive: true });
+  await fs.mkdir(path.join(dataDir, "workspace"), { recursive: true });
 
   const container = await docker.createContainer({
-    name: name ?? containerName(tenant.slug),
+    name: cName,
     Image: tenant.image || OPENCLAW_IMAGE,
     Cmd: ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"],
     Env: await buildEnvVars(tenant),
@@ -180,7 +190,7 @@ export async function waitForHealthy(
   return false;
 }
 
-async function tryRemoveByName(name: string): Promise<void> {
+export async function tryRemoveByName(name: string): Promise<void> {
   try {
     const c = docker.getContainer(name);
     await c.stop({ t: 5 }).catch(() => {});
@@ -245,7 +255,18 @@ export async function execShell(containerId: string) {
   return { exec, stream };
 }
 
-export async function removeTenantData(slug: string): Promise<void> {
+export async function removeTenantData(slug: string, containerId?: string | null): Promise<void> {
+  // Wipe data from inside the running container (it owns the files)
+  if (containerId) {
+    try {
+      const c = docker.getContainer(containerId);
+      const e = await c.exec({ Cmd: ["rm", "-rf", "/home/node/.openclaw"] });
+      await e.start({ Detach: false });
+    } catch {
+      // container not running or already gone
+    }
+  }
+
   const dir = path.resolve(DATA_DIR, "tenants", slug);
   await fs.rm(dir, { recursive: true, force: true });
 }

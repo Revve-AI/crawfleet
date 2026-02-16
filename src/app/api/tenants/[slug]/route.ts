@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFleetAdmin } from "@/lib/auth";
 import { requireTenantAccess } from "@/lib/tenant-access";
-import { deployContainer, removeContainer, removeTenantData } from "@/lib/docker";
+import { deployContainer, removeContainer, removeTenantData, tryRemoveByName } from "@/lib/docker";
 import { deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { TenantUpdateInput } from "@/types";
 import { apiError } from "@/lib/api-error";
@@ -107,10 +107,17 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
       }
     }
 
+    // Wipe data while container is still running (has correct file permissions)
+    await removeTenantData(slug, tenant.containerId);
+
     if (tenant.containerId) {
-      await removeContainer(tenant.containerId);
+      try {
+        await removeContainer(tenant.containerId);
+      } catch {
+        // Container may already be gone; fall through to by-name cleanup
+      }
     }
-    await removeTenantData(slug);
+    await tryRemoveByName(`fleet-${slug}`);
 
     await prisma.auditLog.create({
       data: { tenantId: null, action: "tenant.deleted", details: JSON.stringify({ slug }) },
