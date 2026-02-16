@@ -110,7 +110,7 @@ export async function createTenantContainer(tenant: Tenant): Promise<string> {
 
   const container = await docker.createContainer({
     name: containerName(tenant.slug),
-    Image: OPENCLAW_IMAGE,
+    Image: tenant.image || OPENCLAW_IMAGE,
     Cmd: ["node", "openclaw.mjs", "gateway", "--allow-unconfigured", "--bind", "lan"],
     Env: await buildEnvVars(tenant),
     Labels: buildLabels(tenant.slug),

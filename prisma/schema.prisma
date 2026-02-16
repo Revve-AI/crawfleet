@@ -18,6 +18,7 @@ model Tenant {
   containerStatus String   @default("stopped")
   accessAppId     String?
 
+  image           String?
   envOverrides    String?
 
   gatewayToken    String

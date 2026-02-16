@@ -56,6 +56,16 @@ export default function TenantActions({ slug, status, isAdmin }: { slug: string;
           {loading === "restart" ? "Restarting..." : "Restart"}
         </button>
 
+        {isAdmin && (
+          <button
+            onClick={() => action("deploy")}
+            disabled={!!loading}
+            className="px-3.5 py-2 text-sm bg-brand/10 text-brand-light border border-brand/20 rounded-lg hover:bg-brand/20 transition-colors disabled:opacity-50 font-medium"
+          >
+            {loading === "deploy" ? "Deploying..." : "Deploy"}
+          </button>
+        )}
+
         <div className="flex-1" />
 
         {isAdmin && (
