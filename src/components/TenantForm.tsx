@@ -23,6 +23,8 @@ export default function TenantForm({ initial, mode }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [envWarning, setEnvWarning] = useState(false);
   const [provision, setProvision] = useState<ProvisionState>({ phase: "form" });
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
@@ -58,6 +60,8 @@ export default function TenantForm({ initial, mode }: Props) {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setSaved(false);
+    setEnvWarning(false);
 
     const hasOverrides = Object.keys(envOverrides).length > 0;
 
@@ -86,7 +90,9 @@ export default function TenantForm({ initial, mode }: Props) {
         return;
       }
 
-      router.push("/tenants");
+      // Edit mode: stay on page, show feedback
+      setSaved(true);
+      setEnvWarning(!!data.envChanged);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -150,6 +156,14 @@ export default function TenantForm({ initial, mode }: Props) {
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
           {error}
+        </div>
+      )}
+
+      {saved && !error && (
+        <div className={`px-4 py-3 rounded-lg text-sm ${envWarning ? "bg-amber-500/10 border border-amber-500/20 text-amber-400" : "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"}`}>
+          {envWarning
+            ? "Environment variables updated. Redeploy to apply changes."
+            : "Changes saved."}
         </div>
       )}
 

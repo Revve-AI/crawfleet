@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFleetAdmin } from "@/lib/auth";
 import { requireTenantAccess } from "@/lib/tenant-access";
-import { deployContainer, removeContainer, removeTenantData, tryRemoveByName } from "@/lib/docker";
+import { removeContainer, removeTenantData, tryRemoveByName } from "@/lib/docker";
 import { deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { TenantUpdateInput } from "@/types";
 import { apiError } from "@/lib/api-error";
@@ -65,15 +65,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       data: dbData,
     });
 
-    // If env overrides changed, recreate container
-    if (envChanged && updated.containerId) {
-      const newId = await deployContainer(updated);
-      await prisma.tenant.update({
-        where: { slug },
-        data: { containerId: newId, containerStatus: "running" },
-      });
-    }
-
     await prisma.auditLog.create({
       data: {
         tenantId: tenant.id,
@@ -86,6 +77,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({
       success: true,
       data: { ...safeData, envOverrideKeys: overrideKeyNames(rawOverrides) },
+      envChanged,
     });
   } catch (e) {
     return apiError(e);
