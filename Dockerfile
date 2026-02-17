@@ -21,7 +21,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build
-RUN pnpm exec esbuild server.ts --bundle --platform=node --target=node22 --outfile=custom-server.js --external:next --external:@prisma/client --external:dockerode --external:@google-cloud/storage
+RUN pnpm exec esbuild server.ts --bundle --platform=node --target=node22 --outfile=custom-server.js --external:next --external:@prisma/client --external:dockerode --external:@google-cloud/storage --external:ssh2 --external:@google-cloud/compute
 
 FROM base AS runner
 WORKDIR /app

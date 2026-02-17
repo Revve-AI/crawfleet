@@ -12,6 +12,8 @@
     "db:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@fontsource-variable/dm-sans": "^5.2.8",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@google-cloud/compute": "^6.7.0",
     "@google-cloud/storage": "^7.0.0",
     "@prisma/client": "^6.2.0",
