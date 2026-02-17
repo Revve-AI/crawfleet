@@ -4,7 +4,8 @@ import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
 import { unsealData } from "iron-session";
 import { PrismaClient } from "@prisma/client";
-import { execShell, docker } from "./src/lib/docker";
+import { docker } from "./src/lib/docker";
+import { getProvider } from "./src/lib/providers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -149,28 +150,47 @@ app.prepare().then(() => {
     });
 
     try {
-      const tenant = await prisma.tenant.findUnique({ where: { slug } });
-      if (!tenant?.containerId) {
-        console.error(`[shell] Container not found for tenant: ${slug}`);
-        ws.send(JSON.stringify({ type: "error", message: "Container not found" }));
+      const tenant = await prisma.tenant.findUnique({
+        where: { slug },
+        include: { vpsInstance: true },
+      });
+      if (!tenant) {
+        console.error(`[shell] Tenant not found: ${slug}`);
+        ws.send(JSON.stringify({ type: "error", message: "Tenant not found" }));
         ws.close();
         return;
       }
 
-      // Verify container is running
-      const containerInfo = await docker.getContainer(tenant.containerId).inspect();
-      if (!containerInfo.State.Running) {
-        console.error(`[shell] Container not running for tenant: ${slug} (state: ${containerInfo.State.Status})`);
-        ws.send(JSON.stringify({ type: "error", message: "Container not running" }));
+      // For Docker tenants, verify container is running
+      if (tenant.provider === "docker") {
+        if (!tenant.containerId) {
+          console.error(`[shell] Container not found for tenant: ${slug}`);
+          ws.send(JSON.stringify({ type: "error", message: "Container not found" }));
+          ws.close();
+          return;
+        }
+        const containerInfo = await docker.getContainer(tenant.containerId).inspect();
+        if (!containerInfo.State.Running) {
+          console.error(`[shell] Container not running for tenant: ${slug} (state: ${containerInfo.State.Status})`);
+          ws.send(JSON.stringify({ type: "error", message: "Container not running" }));
+          ws.close();
+          return;
+        }
+      }
+
+      // For VPS tenants, verify VM is accessible
+      if (tenant.provider === "vps" && !tenant.vpsInstance?.externalIp) {
+        console.error(`[shell] VPS not ready for tenant: ${slug}`);
+        ws.send(JSON.stringify({ type: "error", message: "VPS not ready" }));
         ws.close();
         return;
       }
 
-      console.log(`[shell] Starting exec shell for tenant: ${slug} (container: ${tenant.containerId})`);
+      console.log(`[shell] Starting shell for tenant: ${slug} (provider: ${tenant.provider})`);
 
-
-      const { exec, stream } = await execShell(tenant.containerId);
-      console.log(`[shell] Exec shell started successfully for tenant: ${slug}`);
+      const provider = await getProvider(tenant);
+      const shell = await provider.execShell(tenant);
+      console.log(`[shell] Shell started successfully for tenant: ${slug}`);
 
       // Audit log
       prisma.auditLog
@@ -183,32 +203,28 @@ app.prepare().then(() => {
         })
         .catch(() => {});
 
-      // Container output -> WebSocket
-      stream.on("data", (chunk: Buffer) => {
+      // Shell output -> WebSocket
+      shell.stream.on("data", (chunk: Buffer) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "output", data: chunk.toString("utf-8") }));
         }
       });
 
-      stream.on("end", () => {
+      shell.stream.on("end", () => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "exit" }));
           ws.close();
         }
       });
 
-      // WebSocket input -> container
+      // WebSocket input -> shell
       ws.on("message", async (raw) => {
         try {
           const msg = JSON.parse(raw.toString());
           if (msg.type === "input" && typeof msg.data === "string") {
-            stream.write(msg.data);
+            shell.stream.write(msg.data);
           } else if (msg.type === "resize" && msg.cols && msg.rows) {
-            try {
-              await exec.resize({ h: msg.rows, w: msg.cols });
-            } catch {
-              // resize may fail if exec already exited
-            }
+            await shell.resize(msg.cols, msg.rows).catch(() => {});
           }
         } catch {
           // ignore malformed messages
@@ -218,14 +234,14 @@ app.prepare().then(() => {
       ws.on("close", () => {
         if (!streamDestroyed) {
           streamDestroyed = true;
-          stream.destroy();
+          shell.destroy();
         }
       });
 
-      stream.on("error", () => {
+      shell.stream.on("error", () => {
         if (!streamDestroyed) {
           streamDestroyed = true;
-          stream.destroy();
+          shell.destroy();
         }
         if (ws.readyState === WebSocket.OPEN) {
           ws.close();

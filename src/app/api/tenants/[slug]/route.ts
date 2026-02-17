@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFleetAdmin } from "@/lib/auth";
 import { requireTenantAccess } from "@/lib/tenant-access";
-import { removeContainer, removeTenantData, tryRemoveByName } from "@/lib/docker";
+import { tryRemoveByName } from "@/lib/docker";
 import { deleteTenantAccessApp } from "@/lib/cloudflare-access";
+import { getProvider } from "@/lib/providers";
 import { TenantUpdateInput } from "@/types";
 import { apiError } from "@/lib/api-error";
 
@@ -14,7 +15,6 @@ function safeParseOverrides(raw: string | null): Record<string, string> {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-/** Return override keys (names only, no values) for safe API response */
 function overrideKeyNames(raw: string | null): string[] {
   return Object.keys(safeParseOverrides(raw));
 }
@@ -24,7 +24,6 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
 
-    // Strip raw override values, return key names only
     const { envOverrides, ...rest } = tenant;
     return NextResponse.json({
       success: true,
@@ -44,7 +43,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const tenant = await prisma.tenant.findUnique({ where: { slug } });
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Merge env overrides: existing + incoming. Empty string value = delete that key.
     let envChanged = false;
     const dbData: Record<string, unknown> = { ...body };
     if (incomingOverrides) {
@@ -88,9 +86,24 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
     await requireFleetAdmin();
     const { slug } = await params;
-    const tenant = await prisma.tenant.findUnique({ where: { slug } });
+    const tenant = await prisma.tenant.findUnique({
+      where: { slug },
+      include: { vpsInstance: true },
+    });
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+    const provider = await getProvider(tenant);
+
+    // Provider-specific cleanup (VM + tunnel for VPS, container for Docker)
+    await provider.removeTenantData(tenant);
+    await provider.remove(tenant);
+
+    // For Docker, also clean up by name as fallback
+    if (tenant.provider === "docker") {
+      await tryRemoveByName(`fleet-${slug}`);
+    }
+
+    // Delete Cloudflare Access app (shared across all providers)
     if (tenant.accessAppId) {
       try {
         await deleteTenantAccessApp(tenant.accessAppId);
@@ -98,18 +111,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
         console.error("Failed to delete Cloudflare Access app:", cfErr);
       }
     }
-
-    // Wipe data while container is still running (has correct file permissions)
-    await removeTenantData(slug, tenant.containerId);
-
-    if (tenant.containerId) {
-      try {
-        await removeContainer(tenant.containerId);
-      } catch {
-        // Container may already be gone; fall through to by-name cleanup
-      }
-    }
-    await tryRemoveByName(`fleet-${slug}`);
 
     await prisma.auditLog.create({
       data: { tenantId: null, action: "tenant.deleted", details: JSON.stringify({ slug }) },

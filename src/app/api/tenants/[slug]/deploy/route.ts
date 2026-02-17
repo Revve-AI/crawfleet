@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireFleetAdmin } from "@/lib/auth";
-import { deployContainer } from "@/lib/docker";
+import { getProvider } from "@/lib/providers";
 import { sseResponse, type SSESend } from "@/lib/sse";
 
 type Params = { params: Promise<{ slug: string }> };
@@ -11,15 +11,32 @@ export async function POST(req: NextRequest, { params }: Params) {
     await requireFleetAdmin();
     const { slug } = await params;
 
-    const tenant = await prisma.tenant.findUnique({ where: { slug } });
+    const tenant = await prisma.tenant.findUnique({
+      where: { slug },
+      include: { vpsInstance: true },
+    });
     if (!tenant) throw new Error("Not found");
-    if (!tenant.containerId) throw new Error("No container");
 
     const body = await req.json().catch(() => ({}));
     const dbData: Record<string, unknown> = {};
 
-    if (body.image && typeof body.image === "string") {
-      dbData.image = body.image.trim();
+    if (tenant.provider === "docker") {
+      // Docker: handle image changes
+      if (!tenant.containerId) throw new Error("No container");
+
+      if (body.image && typeof body.image === "string") {
+        dbData.image = body.image.trim();
+      }
+    } else {
+      // VPS: handle git tag changes
+      if (body.gitTag && typeof body.gitTag === "string" && tenant.vpsInstance) {
+        await prisma.vpsInstance.update({
+          where: { id: tenant.vpsInstance.id },
+          data: { gitTag: body.gitTag.trim() },
+        });
+        // Refresh tenant data
+        tenant.vpsInstance.gitTag = body.gitTag.trim();
+      }
     }
 
     if (body.envOverrides && typeof body.envOverrides === "object") {
@@ -39,26 +56,40 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     const updated =
       Object.keys(dbData).length > 0
-        ? await prisma.tenant.update({ where: { slug }, data: dbData })
+        ? await prisma.tenant.update({
+            where: { slug },
+            data: dbData,
+            include: { vpsInstance: true },
+          })
         : tenant;
 
     send("status", { step: "Starting deploy" });
 
-    const newId = await deployContainer(updated, (step) => {
+    const provider = await getProvider(updated);
+    const newId = await provider.deploy(updated, (step) => {
       send("status", { step });
     });
 
-    await prisma.tenant.update({
-      where: { slug },
-      data: { containerId: newId, containerStatus: "running" },
-    });
+    if (tenant.provider === "docker") {
+      await prisma.tenant.update({
+        where: { slug },
+        data: { containerId: newId, containerStatus: "running" },
+      });
+    } else {
+      await prisma.tenant.update({
+        where: { slug },
+        data: { containerStatus: "running" },
+      });
+    }
 
     await prisma.auditLog.create({
       data: {
         tenantId: tenant.id,
         action: "tenant.deployed",
         details: JSON.stringify({
+          provider: tenant.provider,
           ...(dbData.image ? { image: dbData.image } : {}),
+          ...(body.gitTag ? { gitTag: body.gitTag } : {}),
           ...(body.envOverrides ? { envOverrides: Object.keys(body.envOverrides) } : {}),
         }),
       },

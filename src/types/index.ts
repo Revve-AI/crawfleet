@@ -3,6 +3,11 @@ export interface TenantCreateInput {
   displayName: string;
   email: string;
   envOverrides?: Record<string, string>;
+  provider?: "docker" | "vps";
+  cloud?: string;
+  machineType?: string;
+  region?: string;
+  gitTag?: string;
 }
 
 export interface TenantUpdateInput {

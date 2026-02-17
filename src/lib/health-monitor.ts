@@ -1,29 +1,43 @@
 import { prisma } from "./db";
-import { getContainerHealth, getContainerStatus } from "./docker";
+import { getProvider } from "./providers";
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 export async function checkAllHealth(): Promise<void> {
   const tenants = await prisma.tenant.findMany({
-    where: { containerId: { not: null } },
+    where: {
+      OR: [
+        { containerId: { not: null } },
+        { provider: "vps" },
+      ],
+    },
+    include: { vpsInstance: true },
   });
 
   for (const tenant of tenants) {
-    if (!tenant.containerId) continue;
+    // Skip Docker tenants without containers
+    if (tenant.provider === "docker" && !tenant.containerId) continue;
+    // Skip VPS tenants without instances
+    if (tenant.provider === "vps" && !tenant.vpsInstance) continue;
 
-    const status = await getContainerStatus(tenant.containerId);
-    const health = status === "running"
-      ? await getContainerHealth(tenant.containerId)
-      : "unknown";
+    try {
+      const provider = await getProvider(tenant);
+      const status = await provider.getStatus(tenant);
+      const health = status === "running"
+        ? await provider.getHealth(tenant)
+        : "unknown";
 
-    await prisma.tenant.update({
-      where: { id: tenant.id },
-      data: {
-        containerStatus: status,
-        lastHealthCheck: new Date(),
-        lastHealthStatus: health,
-      },
-    });
+      await prisma.tenant.update({
+        where: { id: tenant.id },
+        data: {
+          containerStatus: status,
+          lastHealthCheck: new Date(),
+          lastHealthStatus: health,
+        },
+      });
+    } catch {
+      // Individual health check failure shouldn't stop the loop
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireTenantAccess } from "@/lib/tenant-access";
-import { getContainerHealth, getContainerStatus } from "@/lib/docker";
+import { getProvider } from "@/lib/providers";
 import { apiError } from "@/lib/api-error";
 
 type Params = { params: Promise<{ slug: string }> };
@@ -10,12 +10,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
   try {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
-    if (!tenant.containerId) {
-      return NextResponse.json({ error: "No container" }, { status: 404 });
-    }
 
-    const status = await getContainerStatus(tenant.containerId);
-    const health = status === "running" ? await getContainerHealth(tenant.containerId) : "unknown";
+    const provider = await getProvider(tenant);
+    const status = await provider.getStatus(tenant);
+    const health = status === "running" ? await provider.getHealth(tenant) : "unknown";
 
     await prisma.tenant.update({
       where: { slug },

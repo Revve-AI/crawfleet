@@ -23,6 +23,8 @@ model Tenant {
 
   gatewayToken    String
 
+  provider        String   @default("docker") // "docker" | "vps"
+
   lastHealthCheck  DateTime?
   lastHealthStatus String?
 
@@ -30,6 +32,32 @@ model Tenant {
   updatedAt       DateTime @updatedAt
 
   auditLogs       AuditLog[]
+  vpsInstance     VpsInstance?
+}
+
+model VpsInstance {
+  id              String   @id @default(cuid())
+  tenantId        String   @unique
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  cloud           String   // "gcp" | "hetzner" | "aws"
+  region          String
+  instanceId      String
+  machineType     String
+  externalIp      String?
+
+  tunnelId        String?
+  tunnelToken     String?
+
+  gitTag          String?
+
+  sshUser         String   @default("openclaw")
+  sshPort         Int      @default(22)
+
+  vmStatus        String   @default("creating") // creating|running|stopped|error|destroying
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model GlobalSetting {
