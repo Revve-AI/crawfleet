@@ -1,8 +1,8 @@
-import { Tenant, VpsInstance } from "@prisma/client";
+import type { TenantWithVps } from "@/lib/supabase/types";
 import { Duplex } from "stream";
 
 export type StatusCallback = (step: string) => void;
-export type TenantWithVps = Tenant & { vpsInstance: VpsInstance | null };
+export type { TenantWithVps };
 
 export interface ShellHandle {
   stream: Duplex;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireFleetAdmin } from "@/lib/auth";
 import { requireTenantAccess } from "@/lib/tenant-access";
 import { tryRemoveByName } from "@/lib/docker";
@@ -10,13 +10,9 @@ import { apiError } from "@/lib/api-error";
 
 type Params = { params: Promise<{ slug: string }> };
 
-function safeParseOverrides(raw: string | null): Record<string, string> {
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return {}; }
-}
-
-function overrideKeyNames(raw: string | null): string[] {
-  return Object.keys(safeParseOverrides(raw));
+function overrideKeyNames(overrides: Record<string, string> | null): string[] {
+  if (!overrides) return [];
+  return Object.keys(overrides);
 }
 
 export async function GET(_req: NextRequest, { params }: Params) {
@@ -24,10 +20,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
 
-    const { envOverrides, ...rest } = tenant;
+    const { env_overrides, ...rest } = tenant;
     return NextResponse.json({
       success: true,
-      data: { ...rest, envOverrideKeys: overrideKeyNames(envOverrides) },
+      data: { ...rest, envOverrideKeys: overrideKeyNames(env_overrides) },
     });
   } catch (e) {
     return apiError(e);
@@ -40,13 +36,20 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const { email: _email, envOverrides: incomingOverrides, ...body }: TenantUpdateInput & { email?: string } = await req.json();
 
-    const tenant = await prisma.tenant.findUnique({ where: { slug } });
+    const { data: tenant } = await supabaseAdmin
+      .from("tenants")
+      .select("*")
+      .eq("slug", slug)
+      .single();
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     let envChanged = false;
-    const dbData: Record<string, unknown> = { ...body };
+    const dbData: Record<string, unknown> = {};
+    if (body.displayName !== undefined) dbData.display_name = body.displayName;
+    if (body.enabled !== undefined) dbData.enabled = body.enabled;
+
     if (incomingOverrides) {
-      const existing = safeParseOverrides(tenant.envOverrides);
+      const existing: Record<string, string> = tenant.env_overrides || {};
       for (const [k, v] of Object.entries(incomingOverrides)) {
         if (!v || v.trim() === "") {
           if (k in existing) { delete existing[k]; envChanged = true; }
@@ -55,23 +58,23 @@ export async function PATCH(req: NextRequest, { params }: Params) {
           envChanged = true;
         }
       }
-      dbData.envOverrides = Object.keys(existing).length > 0 ? JSON.stringify(existing) : null;
+      dbData.env_overrides = Object.keys(existing).length > 0 ? existing : null;
     }
 
-    const updated = await prisma.tenant.update({
-      where: { slug },
-      data: dbData,
+    const { data: updated } = await supabaseAdmin
+      .from("tenants")
+      .update(dbData)
+      .eq("slug", slug)
+      .select()
+      .single();
+
+    await supabaseAdmin.from("audit_logs").insert({
+      tenant_id: tenant.id,
+      action: envChanged ? "tenant.env_changed" : "config.updated",
+      details: { ...body, ...(incomingOverrides ? { envOverrides: Object.keys(incomingOverrides) } : {}) },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        tenantId: tenant.id,
-        action: envChanged ? "tenant.env_changed" : "config.updated",
-        details: JSON.stringify({ ...body, ...(incomingOverrides ? { envOverrides: Object.keys(incomingOverrides) } : {}) }),
-      },
-    });
-
-    const { envOverrides: rawOverrides, ...safeData } = updated;
+    const { env_overrides: rawOverrides, ...safeData } = updated!;
     return NextResponse.json({
       success: true,
       data: { ...safeData, envOverrideKeys: overrideKeyNames(rawOverrides) },
@@ -86,10 +89,11 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
     await requireFleetAdmin();
     const { slug } = await params;
-    const tenant = await prisma.tenant.findUnique({
-      where: { slug },
-      include: { vpsInstance: true },
-    });
+    const { data: tenant } = await supabaseAdmin
+      .from("tenants")
+      .select("*, vps_instances(*)")
+      .eq("slug", slug)
+      .single();
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const provider = await getProvider(tenant);
@@ -104,19 +108,21 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     }
 
     // Delete Cloudflare Access app (shared across all providers)
-    if (tenant.accessAppId) {
+    if (tenant.access_app_id) {
       try {
-        await deleteTenantAccessApp(tenant.accessAppId);
+        await deleteTenantAccessApp(tenant.access_app_id);
       } catch (cfErr) {
         console.error("Failed to delete Cloudflare Access app:", cfErr);
       }
     }
 
-    await prisma.auditLog.create({
-      data: { tenantId: null, action: "tenant.deleted", details: JSON.stringify({ slug }) },
+    await supabaseAdmin.from("audit_logs").insert({
+      tenant_id: null,
+      action: "tenant.deleted",
+      details: { slug },
     });
 
-    await prisma.tenant.delete({ where: { slug } });
+    await supabaseAdmin.from("tenants").delete().eq("slug", slug);
 
     return NextResponse.json({ success: true });
   } catch (e) {

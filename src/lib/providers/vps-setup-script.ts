@@ -130,6 +130,22 @@ echo "=== Deploy complete ==="
 `;
 }
 
+export function generateLockdownScript(): string {
+  return `#!/bin/bash
+set -euo pipefail
+
+echo "=== Locking down firewall ==="
+
+# Remove the SSH allow rule and deny SSH + DNS inbound
+ufw delete allow ssh || true
+ufw deny 22/tcp
+ufw deny 53
+ufw reload
+
+echo "=== Firewall locked down: zero open ports ==="
+`;
+}
+
 export function generateWriteConfigScript(envVars: Record<string, string>, gatewayToken: string): string {
   const envLines = Object.entries(envVars)
     .map(([k, v]) => `${k}=${v}`)

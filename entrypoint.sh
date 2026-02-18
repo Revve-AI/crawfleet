@@ -1,4 +1,4 @@
 #!/bin/sh
 set -e
-prisma db push --skip-generate --accept-data-loss
+npx node-pg-migrate up --migrations-dir migrations --database-url-var DATABASE_URL
 exec node custom-server.js

@@ -70,12 +70,7 @@ export default function NavShell({ children, isAdmin }: { children: React.ReactN
     <>
       {/* Brand */}
       <div className="h-16 flex items-center gap-3 px-5 shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-brand flex items-center justify-center">
-          <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-            <path d="M3 14l5-8 5 8" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
-            <path d="M7 14l5-8 5 8" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
+        <img src="/logo.png" alt="Logo" className="w-8 h-8 rounded-lg" />
         <div className="leading-tight">
           <div className="text-sm font-semibold text-white tracking-tight">Revve</div>
           <div className="text-[10px] text-zinc-500 font-medium">Fleet Manager</div>
@@ -146,12 +141,7 @@ export default function NavShell({ children, isAdmin }: { children: React.ReactN
           </svg>
         </button>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-brand flex items-center justify-center">
-            <svg width="12" height="12" viewBox="0 0 20 20" fill="none">
-              <path d="M3 14l5-8 5 8" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
-              <path d="M7 14l5-8 5 8" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
+          <img src="/logo.png" alt="Logo" className="w-6 h-6 rounded-md" />
           <span className="text-sm font-semibold">Fleet</span>
         </div>
         <div className="w-8" />

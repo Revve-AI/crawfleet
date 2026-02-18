@@ -1,56 +1,27 @@
-import { getIronSession, IronSession } from "iron-session";
-import { cookies, headers } from "next/headers";
-
-export interface SessionData {
-  isAdmin: boolean;
-  email: string;
-}
-
-const sessionOptions = {
-  password: process.env.SESSION_SECRET || "complex_password_at_least_32_characters_long_for_iron_session",
-  cookieName: "fleet-session",
-  cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: "lax" as const,
-    maxAge: 60 * 60 * 24, // 24 hours
-  },
-};
-
-export async function getSession(): Promise<IronSession<SessionData>> {
-  const cookieStore = await cookies();
-  const session = await getIronSession<SessionData>(cookieStore, sessionOptions);
-
-  if (!session.isAdmin) {
-    const headerStore = await headers();
-    const email = headerStore.get("X-Auth-Email");
-    if (email) {
-      session.isAdmin = true;
-      session.email = email;
-      await session.save();
-    }
-  }
-
-  return session;
-}
+import { createClient } from "@/lib/supabase/server";
+import { headers } from "next/headers";
 
 /** Get the authenticated user's email. Throws "Unauthorized" if not logged in.
- *  Reads from X-Auth-Email header first (set by middleware), falls back to session.
- *  This avoids session.save() which crashes in Server Components. */
+ *  In dev mode, reads from X-Auth-Email header (set by middleware). */
 export async function getAuthEmail(): Promise<string> {
-  const headerStore = await headers();
-  const headerEmail = headerStore.get("X-Auth-Email");
-  if (headerEmail) return headerEmail;
-
-  const session = await getSession();
-  if (!session.isAdmin || !session.email) {
-    throw new Error("Unauthorized");
+  if (process.env.NODE_ENV === "development") {
+    const headerStore = await headers();
+    const headerEmail = headerStore.get("X-Auth-Email");
+    if (headerEmail) return headerEmail;
   }
-  return session.email;
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.email) throw new Error("Unauthorized");
+  return user.email;
 }
 
-/** Check if an email belongs to a fleet admin (can manage all tenants). */
+/** Check if an email belongs to a fleet admin (can manage all tenants).
+ *  In dev mode, dev@revve.ai is always admin. */
 export function isFleetAdmin(email: string): boolean {
+  if (process.env.NODE_ENV === "development" && email.toLowerCase() === "dev@revve.ai") {
+    return true;
+  }
   const raw = process.env.ADMIN_EMAILS || "";
   if (!raw) return false;
   const admins = raw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);

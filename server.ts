@@ -2,11 +2,9 @@ import { createServer, IncomingMessage } from "http";
 import { parse } from "url";
 import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
-import { unsealData } from "iron-session";
-import { PrismaClient } from "@prisma/client";
+import { createClient } from "@supabase/supabase-js";
 import { docker } from "./src/lib/docker";
 import { getProvider } from "./src/lib/providers";
-import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = process.env.HOSTNAME || "0.0.0.0";
@@ -15,36 +13,11 @@ const port = parseInt(process.env.PORT || "3000", 10);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
-const prisma = new PrismaClient();
-
-const SESSION_PASSWORD =
-  process.env.SESSION_SECRET ||
-  "complex_password_at_least_32_characters_long_for_iron_session";
-const SESSION_COOKIE = "fleet-session";
-
-const TEAM_DOMAIN = process.env.CLOUDFLARE_TEAM_DOMAIN;
-const AUD = process.env.CF_ACCESS_AUD;
-
-const JWKS_URL = TEAM_DOMAIN
-  ? new URL(`https://${TEAM_DOMAIN}.cloudflareaccess.com/cdn-cgi/access/certs`)
-  : undefined;
-
-const jwks = JWKS_URL ? createRemoteJWKSet(JWKS_URL) : undefined;
-
-interface SessionData {
-  isAdmin: boolean;
-  email: string;
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  if (!header) return cookies;
-  for (const part of header.split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key) cookies[key] = rest.join("=");
-  }
-  return cookies;
-}
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { autoRefreshToken: false, persistSession: false } },
+);
 
 const SHELL_PATH_RE = /^\/api\/tenants\/([a-z0-9-]+)\/shell$/;
 
@@ -68,45 +41,35 @@ app.prepare().then(() => {
     const slug = match[1];
     console.log(`[shell] WebSocket upgrade request for tenant: ${slug}`);
 
-    // Auth check: verify Cloudflare Access JWT
+    // Auth check: verify Supabase access token from query param or cookie
     let sessionEmail = "";
     if (!dev) {
-      const cfJwt = req.headers["cf-access-jwt-assertion"];
-      if (!cfJwt || typeof cfJwt !== "string") {
-        console.error(`[shell] Auth failed for ${slug}: no CF Access JWT header`);
+      // Extract Supabase access token from query string
+      const { query } = parse(req.url || "/", true);
+      const token = (query.access_token as string) || "";
+
+      if (!token) {
+        console.error(`[shell] Auth failed for ${slug}: no access token`);
         socket.destroy();
         return;
       }
 
-      if (!jwks || !AUD || !TEAM_DOMAIN) {
-        console.error(`[shell] Auth failed for ${slug}: CF Access not configured`);
+      const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+      if (error || !user?.email) {
+        console.error(`[shell] Auth failed for ${slug}: invalid token`);
         socket.destroy();
         return;
       }
 
-      try {
-        const { payload } = await jwtVerify(cfJwt, jwks, {
-          audience: AUD,
-          issuer: `https://${TEAM_DOMAIN}.cloudflareaccess.com`,
-        });
-
-        const email = payload.email as string | undefined;
-        if (!email || !email.endsWith("@revve.ai")) {
-          console.error(`[shell] Auth failed for ${slug}: invalid email in JWT (${email})`);
-          socket.destroy();
-          return;
-        }
-
-        sessionEmail = email;
-        console.log(`[shell] Auth via CF Access JWT for ${slug}: ${sessionEmail}`);
-      } catch (err) {
-        console.error(`[shell] Auth failed for ${slug}: JWT verification error:`, err);
-        socket.destroy();
-        return;
-      }
+      sessionEmail = user.email;
+      console.log(`[shell] Auth via Supabase token for ${slug}: ${sessionEmail}`);
 
       // Check tenant ownership (admin or email match)
-      const tenant = await prisma.tenant.findUnique({ where: { slug } });
+      const { data: tenant } = await supabaseAdmin
+        .from("tenants")
+        .select("email")
+        .eq("slug", slug)
+        .single();
       if (!tenant) {
         console.error(`[shell] Auth failed for ${slug}: tenant not found`);
         socket.destroy();
@@ -150,10 +113,11 @@ app.prepare().then(() => {
     });
 
     try {
-      const tenant = await prisma.tenant.findUnique({
-        where: { slug },
-        include: { vpsInstance: true },
-      });
+      const { data: tenant } = await supabaseAdmin
+        .from("tenants")
+        .select("*, vps_instances(*)")
+        .eq("slug", slug)
+        .single();
       if (!tenant) {
         console.error(`[shell] Tenant not found: ${slug}`);
         ws.send(JSON.stringify({ type: "error", message: "Tenant not found" }));
@@ -163,13 +127,13 @@ app.prepare().then(() => {
 
       // For Docker tenants, verify container is running
       if (tenant.provider === "docker") {
-        if (!tenant.containerId) {
+        if (!tenant.container_id) {
           console.error(`[shell] Container not found for tenant: ${slug}`);
           ws.send(JSON.stringify({ type: "error", message: "Container not found" }));
           ws.close();
           return;
         }
-        const containerInfo = await docker.getContainer(tenant.containerId).inspect();
+        const containerInfo = await docker.getContainer(tenant.container_id).inspect();
         if (!containerInfo.State.Running) {
           console.error(`[shell] Container not running for tenant: ${slug} (state: ${containerInfo.State.Status})`);
           ws.send(JSON.stringify({ type: "error", message: "Container not running" }));
@@ -179,7 +143,7 @@ app.prepare().then(() => {
       }
 
       // For VPS tenants, verify VM is accessible
-      if (tenant.provider === "vps" && !tenant.vpsInstance?.externalIp) {
+      if (tenant.provider === "vps" && !tenant.vps_instances?.tunnel_id) {
         console.error(`[shell] VPS not ready for tenant: ${slug}`);
         ws.send(JSON.stringify({ type: "error", message: "VPS not ready" }));
         ws.close();
@@ -193,15 +157,14 @@ app.prepare().then(() => {
       console.log(`[shell] Shell started successfully for tenant: ${slug}`);
 
       // Audit log
-      prisma.auditLog
-        .create({
-          data: {
-            tenantId: tenant.id,
-            action: "shell_access",
-            details: `Shell opened for ${slug}`,
-          },
+      supabaseAdmin
+        .from("audit_logs")
+        .insert({
+          tenant_id: tenant.id,
+          action: "shell_access",
+          details: { slug },
         })
-        .catch(() => {});
+        .then(() => {});
 
       // Shell output -> WebSocket
       shell.stream.on("data", (chunk: Buffer) => {

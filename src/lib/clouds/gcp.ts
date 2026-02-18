@@ -2,7 +2,31 @@ import { InstancesClient } from "@google-cloud/compute";
 import type { CloudProvider, VmSpec, VmInfo } from "./types";
 import { GCP_PROJECT } from "../constants";
 
-const instances = new InstancesClient();
+let _instances: InstancesClient | null = null;
+
+function getInstancesClient(): InstancesClient {
+  if (_instances) return _instances;
+
+  const saKey = process.env.GCP_SERVICE_ACCOUNT_KEY;
+  const credFile = process.env.GCP_CREDENTIALS_FILE;
+
+  if (saKey) {
+    // Inline service account key — raw JSON or base64-encoded
+    const json = saKey.trim().startsWith("{")
+      ? saKey
+      : Buffer.from(saKey, "base64").toString("utf-8");
+    const credentials = JSON.parse(json);
+    _instances = new InstancesClient({ credentials, projectId: GCP_PROJECT || undefined });
+  } else if (credFile) {
+    // File path — SA key or WIF config
+    _instances = new InstancesClient({ keyFilename: credFile, projectId: GCP_PROJECT || undefined });
+  } else {
+    // ADC fallback (metadata service, GOOGLE_APPLICATION_CREDENTIALS, gcloud CLI)
+    _instances = new InstancesClient();
+  }
+
+  return _instances;
+}
 
 /** Wait for a GCP LRO to complete. For mutating ops, waits a fixed delay. */
 async function waitForOperation(op: { done?: boolean | null }) {
@@ -12,7 +36,7 @@ async function waitForOperation(op: { done?: boolean | null }) {
 
 export class GcpCloudProvider implements CloudProvider {
   async createVm(spec: VmSpec): Promise<string> {
-    const [operation] = await instances.insert({
+    const [operation] = await getInstancesClient().insert({
       project: GCP_PROJECT,
       zone: spec.region,
       instanceResource: {
@@ -81,7 +105,7 @@ export class GcpCloudProvider implements CloudProvider {
   }
 
   async startVm(instanceId: string, region: string): Promise<void> {
-    const [operation] = await instances.start({
+    const [operation] = await getInstancesClient().start({
       project: GCP_PROJECT,
       zone: region,
       instance: instanceId,
@@ -90,7 +114,7 @@ export class GcpCloudProvider implements CloudProvider {
   }
 
   async stopVm(instanceId: string, region: string): Promise<void> {
-    const [operation] = await instances.stop({
+    const [operation] = await getInstancesClient().stop({
       project: GCP_PROJECT,
       zone: region,
       instance: instanceId,
@@ -99,7 +123,7 @@ export class GcpCloudProvider implements CloudProvider {
   }
 
   async deleteVm(instanceId: string, region: string): Promise<void> {
-    const [operation] = await instances.delete({
+    const [operation] = await getInstancesClient().delete({
       project: GCP_PROJECT,
       zone: region,
       instance: instanceId,
@@ -109,7 +133,7 @@ export class GcpCloudProvider implements CloudProvider {
 
   async getVmInfo(instanceId: string, region: string): Promise<VmInfo> {
     try {
-      const [instance] = await instances.get({
+      const [instance] = await getInstancesClient().get({
         project: GCP_PROJECT,
         zone: region,
         instance: instanceId,

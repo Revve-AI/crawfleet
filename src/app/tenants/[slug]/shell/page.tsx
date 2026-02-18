@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
 import ContainerShell from "@/components/ContainerShell";
 import ShellCloseButton from "./ShellCloseButton";
@@ -11,7 +11,11 @@ export default async function ShellPage({ params }: { params: Promise<{ slug: st
   const { slug } = await params;
   const email = await getAuthEmail();
   const admin = isFleetAdmin(email);
-  const tenant = await prisma.tenant.findUnique({ where: { slug } });
+  const { data: tenant } = await supabaseAdmin
+    .from("tenants")
+    .select("slug, display_name, email")
+    .eq("slug", slug)
+    .single();
   if (!tenant) notFound();
   if (!admin && tenant.email !== email) notFound();
 
@@ -26,7 +30,7 @@ export default async function ShellPage({ params }: { params: Promise<{ slug: st
             </svg>
           </div>
           <span className="text-sm font-medium text-zinc-300">
-            {tenant.displayName} <span className="text-zinc-600">&mdash;</span> Shell
+            {tenant.display_name} <span className="text-zinc-600">&mdash;</span> Shell
           </span>
         </div>
         <ShellCloseButton />

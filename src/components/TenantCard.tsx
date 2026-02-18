@@ -6,12 +6,12 @@ import { CLOUD_SHORT_NAMES } from "@/lib/constants";
 
 interface Tenant {
   slug: string;
-  displayName: string;
+  display_name: string;
   email?: string | null;
-  containerStatus: string;
-  lastHealthStatus: string | null;
+  container_status: string;
+  last_health_status: string | null;
   provider: string;
-  vpsInstance?: { cloud: string } | null;
+  vps_instances?: { cloud: string } | null;
 }
 
 const accentMap: Record<string, string> = {
@@ -21,7 +21,7 @@ const accentMap: Record<string, string> = {
 };
 
 export default function TenantCard({ tenant }: { tenant: Tenant }) {
-  const accent = accentMap[tenant.containerStatus] || accentMap.stopped;
+  const accent = accentMap[tenant.container_status] || accentMap.stopped;
 
   return (
     <Link
@@ -31,10 +31,10 @@ export default function TenantCard({ tenant }: { tenant: Tenant }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-zinc-100 truncate">{tenant.displayName}</h3>
+            <h3 className="font-semibold text-zinc-100 truncate">{tenant.display_name}</h3>
             {tenant.provider === "vps" && (
               <span className="inline-flex items-center px-1.5 py-0.5 bg-violet-500/10 text-violet-400 text-[10px] font-medium rounded border border-violet-500/20 shrink-0">
-                {(tenant.vpsInstance?.cloud && CLOUD_SHORT_NAMES[tenant.vpsInstance.cloud]) || "VPS"}
+                {(tenant.vps_instances?.cloud && CLOUD_SHORT_NAMES[tenant.vps_instances.cloud]) || "VPS"}
               </span>
             )}
           </div>
@@ -43,7 +43,7 @@ export default function TenantCard({ tenant }: { tenant: Tenant }) {
             {tenant.email && <span className="text-zinc-600"> &middot; {tenant.email}</span>}
           </p>
         </div>
-        <StatusBadge status={tenant.containerStatus} />
+        <StatusBadge status={tenant.container_status} />
       </div>
     </Link>
   );

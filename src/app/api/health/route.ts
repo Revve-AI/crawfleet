@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
 import { FleetStats } from "@/types";
 import { apiError } from "@/lib/api-error";
@@ -7,14 +7,22 @@ import { apiError } from "@/lib/api-error";
 export async function GET() {
   try {
     const email = await getAuthEmail();
-    const where = isFleetAdmin(email) ? {} : { email };
-    const tenants = await prisma.tenant.findMany({ where });
+    const admin = isFleetAdmin(email);
+
+    let query = supabaseAdmin.from("tenants").select("container_status, last_health_status");
+    if (!admin) {
+      query = query.eq("email", email);
+    }
+
+    const { data: tenants } = await query;
+    const list = tenants || [];
+
     const stats: FleetStats = {
-      total: tenants.length,
-      running: tenants.filter((t) => t.containerStatus === "running").length,
-      stopped: tenants.filter((t) => t.containerStatus === "stopped").length,
-      healthy: tenants.filter((t) => t.lastHealthStatus === "healthy").length,
-      unhealthy: tenants.filter((t) => t.lastHealthStatus === "unhealthy").length,
+      total: list.length,
+      running: list.filter((t) => t.container_status === "running").length,
+      stopped: list.filter((t) => t.container_status === "stopped").length,
+      healthy: list.filter((t) => t.last_health_status === "healthy").length,
+      unhealthy: list.filter((t) => t.last_health_status === "unhealthy").length,
     };
 
     return NextResponse.json({ success: true, data: stats });

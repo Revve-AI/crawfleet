@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireTenantAccess } from "@/lib/tenant-access";
 import { getProvider } from "@/lib/providers";
 import { apiError } from "@/lib/api-error";
@@ -13,10 +13,14 @@ export async function POST(_req: NextRequest, { params }: Params) {
 
     const provider = await getProvider(tenant);
     await provider.stop(tenant);
-    await prisma.tenant.update({ where: { slug }, data: { containerStatus: "stopped" } });
+    await supabaseAdmin
+      .from("tenants")
+      .update({ container_status: "stopped" })
+      .eq("slug", slug);
 
-    await prisma.auditLog.create({
-      data: { tenantId: tenant.id, action: "tenant.stopped" },
+    await supabaseAdmin.from("audit_logs").insert({
+      tenant_id: tenant.id,
+      action: "tenant.stopped",
     });
 
     return NextResponse.json({ success: true });

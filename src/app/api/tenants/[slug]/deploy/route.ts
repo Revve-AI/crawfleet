@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireFleetAdmin } from "@/lib/auth";
 import { getProvider } from "@/lib/providers";
 import { sseResponse, type SSESend } from "@/lib/sse";
+import type { TenantWithVps } from "@/lib/supabase/types";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -11,38 +12,33 @@ export async function POST(req: NextRequest, { params }: Params) {
     await requireFleetAdmin();
     const { slug } = await params;
 
-    const tenant = await prisma.tenant.findUnique({
-      where: { slug },
-      include: { vpsInstance: true },
-    });
+    const { data: tenant } = await supabaseAdmin
+      .from("tenants")
+      .select("*, vps_instances(*)")
+      .eq("slug", slug)
+      .single();
     if (!tenant) throw new Error("Not found");
 
     const body = await req.json().catch(() => ({}));
     const dbData: Record<string, unknown> = {};
 
     if (tenant.provider === "docker") {
-      // Docker: handle image changes
-      if (!tenant.containerId) throw new Error("No container");
-
+      if (!tenant.container_id) throw new Error("No container");
       if (body.image && typeof body.image === "string") {
         dbData.image = body.image.trim();
       }
     } else {
-      // VPS: handle git tag changes
-      if (body.gitTag && typeof body.gitTag === "string" && tenant.vpsInstance) {
-        await prisma.vpsInstance.update({
-          where: { id: tenant.vpsInstance.id },
-          data: { gitTag: body.gitTag.trim() },
-        });
-        // Refresh tenant data
-        tenant.vpsInstance.gitTag = body.gitTag.trim();
+      if (body.gitTag && typeof body.gitTag === "string" && tenant.vps_instances) {
+        await supabaseAdmin
+          .from("vps_instances")
+          .update({ git_tag: body.gitTag.trim() })
+          .eq("id", tenant.vps_instances.id);
+        tenant.vps_instances.git_tag = body.gitTag.trim();
       }
     }
 
     if (body.envOverrides && typeof body.envOverrides === "object") {
-      const existing: Record<string, string> = tenant.envOverrides
-        ? JSON.parse(tenant.envOverrides)
-        : {};
+      const existing: Record<string, string> = tenant.env_overrides || {};
       for (const [k, v] of Object.entries(body.envOverrides as Record<string, string>)) {
         if (!v || String(v).trim() === "") {
           delete existing[k];
@@ -50,18 +46,21 @@ export async function POST(req: NextRequest, { params }: Params) {
           existing[k] = String(v).trim();
         }
       }
-      dbData.envOverrides =
-        Object.keys(existing).length > 0 ? JSON.stringify(existing) : null;
+      dbData.env_overrides = Object.keys(existing).length > 0 ? existing : null;
     }
 
-    const updated =
-      Object.keys(dbData).length > 0
-        ? await prisma.tenant.update({
-            where: { slug },
-            data: dbData,
-            include: { vpsInstance: true },
-          })
-        : tenant;
+    let updated: TenantWithVps;
+    if (Object.keys(dbData).length > 0) {
+      const { data } = await supabaseAdmin
+        .from("tenants")
+        .update(dbData)
+        .eq("slug", slug)
+        .select("*, vps_instances(*)")
+        .single();
+      updated = data as TenantWithVps;
+    } else {
+      updated = tenant as TenantWithVps;
+    }
 
     send("status", { step: "Starting deploy" });
 
@@ -71,27 +70,25 @@ export async function POST(req: NextRequest, { params }: Params) {
     });
 
     if (tenant.provider === "docker") {
-      await prisma.tenant.update({
-        where: { slug },
-        data: { containerId: newId, containerStatus: "running" },
-      });
+      await supabaseAdmin
+        .from("tenants")
+        .update({ container_id: newId, container_status: "running" })
+        .eq("slug", slug);
     } else {
-      await prisma.tenant.update({
-        where: { slug },
-        data: { containerStatus: "running" },
-      });
+      await supabaseAdmin
+        .from("tenants")
+        .update({ container_status: "running" })
+        .eq("slug", slug);
     }
 
-    await prisma.auditLog.create({
-      data: {
-        tenantId: tenant.id,
-        action: "tenant.deployed",
-        details: JSON.stringify({
-          provider: tenant.provider,
-          ...(dbData.image ? { image: dbData.image } : {}),
-          ...(body.gitTag ? { gitTag: body.gitTag } : {}),
-          ...(body.envOverrides ? { envOverrides: Object.keys(body.envOverrides) } : {}),
-        }),
+    await supabaseAdmin.from("audit_logs").insert({
+      tenant_id: tenant.id,
+      action: "tenant.deployed",
+      details: {
+        provider: tenant.provider,
+        ...(dbData.image ? { image: dbData.image } : {}),
+        ...(body.gitTag ? { gitTag: body.gitTag } : {}),
+        ...(body.envOverrides ? { envOverrides: Object.keys(body.envOverrides) } : {}),
       },
     });
 

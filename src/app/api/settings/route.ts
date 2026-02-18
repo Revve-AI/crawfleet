@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireFleetAdmin } from "@/lib/auth";
 import { apiError } from "@/lib/api-error";
 
@@ -12,14 +12,15 @@ export async function GET() {
   try {
     await requireFleetAdmin();
 
-    const settings = await prisma.globalSetting.findMany({
-      orderBy: { key: "asc" },
-    });
+    const { data: settings } = await supabaseAdmin
+      .from("global_settings")
+      .select("*")
+      .order("key", { ascending: true });
 
-    const data = settings.map((s) => ({
+    const data = (settings || []).map((s) => ({
       key: s.key,
       masked: mask(s.value),
-      updatedAt: s.updatedAt.toISOString(),
+      updatedAt: s.updated_at,
     }));
 
     return NextResponse.json({ success: true, data });
@@ -37,13 +38,17 @@ export async function PUT(req: NextRequest) {
       if (!key.trim()) continue;
 
       if (!value || value.trim() === "") {
-        await prisma.globalSetting.deleteMany({ where: { key } });
+        await supabaseAdmin
+          .from("global_settings")
+          .delete()
+          .eq("key", key);
       } else {
-        await prisma.globalSetting.upsert({
-          where: { key },
-          update: { value: value.trim() },
-          create: { key, value: value.trim() },
-        });
+        await supabaseAdmin
+          .from("global_settings")
+          .upsert(
+            { key, value: value.trim() },
+            { onConflict: "key" },
+          );
       }
     }
 

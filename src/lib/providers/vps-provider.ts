@@ -1,20 +1,22 @@
 import { Duplex } from "stream";
 import { getCloudProvider } from "../clouds";
-import { connectWithRetry, execSSH, shellSSH } from "./ssh";
+import { connectWithRetry, connectSSHThroughTunnel, execSSH, shellSSH } from "./ssh";
 import {
   generateSetupScript,
   generateInstallCloudflaredScript,
   generateDeployScript,
   generateWriteConfigScript,
+  generateLockdownScript,
 } from "./vps-setup-script";
 import {
   createTunnel,
   configureTunnelIngress,
   createTunnelDNS,
+  createTunnelSSHDNS,
   deleteTunnel,
 } from "../cloudflare-tunnel";
 import { resolveAllEnv } from "../key-resolver";
-import { prisma } from "../db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   VPS_SSH_PUBLIC_KEY,
   CLOUDFLARE_DOMAIN,
@@ -33,40 +35,41 @@ function escapeForBash(script: string): string {
 
 export class VpsProvider implements TenantProvider {
   async create(tenant: TenantWithVps, onStatus?: StatusCallback): Promise<string> {
-    const vps = tenant.vpsInstance;
+    const vps = tenant.vps_instances;
     if (!vps) throw new Error("No VPS instance config");
 
     const cloud = getCloudProvider(vps.cloud);
-    const gitTag = vps.gitTag || OPENCLAW_DEFAULT_GIT_TAG;
+    const gitTag = vps.git_tag || OPENCLAW_DEFAULT_GIT_TAG;
 
     // 1. Create VM
     onStatus?.("Creating VM instance");
     const instanceId = await cloud.createVm({
       name: `fleet-${tenant.slug}`,
-      machineType: vps.machineType,
+      machineType: vps.machine_type,
       region: vps.region,
       sshPublicKey: VPS_SSH_PUBLIC_KEY,
     });
 
     try {
       // Update DB with instanceId
-      await prisma.vpsInstance.update({
-        where: { id: vps.id },
-        data: { instanceId, vmStatus: "creating" },
-      });
+      await supabaseAdmin
+        .from("vps_instances")
+        .update({ instance_id: instanceId, vm_status: "creating" })
+        .eq("id", vps.id);
 
       // 2. Wait for VM to be SSH-accessible
       onStatus?.("Waiting for VM to boot");
       const ip = await cloud.waitForReady(instanceId, vps.region);
 
-      await prisma.vpsInstance.update({
-        where: { id: vps.id },
-        data: { externalIp: ip },
-      });
+      await supabaseAdmin
+        .from("vps_instances")
+        .update({ external_ip: ip })
+        .eq("id", vps.id);
 
       // 3. SSH in, run hardening + setup
       // GCP injects the SSH key for user "openclaw", so connect as that user
       // and use sudo for root operations.
+      // Note: execSSH uses ssh2 Client.exec() — remote SSH command, not local shell
       onStatus?.("Hardening OS and installing dependencies");
       const envVars = await resolveAllEnv(tenant);
       const conn = await connectWithRetry({
@@ -79,7 +82,7 @@ export class VpsProvider implements TenantProvider {
         gitTag,
         tunnelToken: "",
         envVars,
-        gatewayToken: tenant.gatewayToken,
+        gatewayToken: tenant.gateway_token,
       });
       const setupResult = await execSSH(
         conn,
@@ -97,11 +100,12 @@ export class VpsProvider implements TenantProvider {
       const { tunnelId, tunnelToken } = await createTunnel(tenant.slug);
       await configureTunnelIngress(tunnelId, tenant.slug, CLOUDFLARE_DOMAIN);
       await createTunnelDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
+      await createTunnelSSHDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
 
-      await prisma.vpsInstance.update({
-        where: { id: vps.id },
-        data: { tunnelId, tunnelToken },
-      });
+      await supabaseAdmin
+        .from("vps_instances")
+        .update({ tunnel_id: tunnelId, tunnel_token: tunnelToken })
+        .eq("id", vps.id);
 
       // 5. Install cloudflared on VM
       onStatus?.("Installing tunnel connector");
@@ -121,14 +125,28 @@ export class VpsProvider implements TenantProvider {
       conn.end();
 
       // 7. Update status
-      await prisma.vpsInstance.update({
-        where: { id: vps.id },
-        data: { vmStatus: "running" },
-      });
+      await supabaseAdmin
+        .from("vps_instances")
+        .update({ vm_status: "running" })
+        .eq("id", vps.id);
 
       // 8. Wait for health (OpenClaw takes ~3 min to start on small VMs)
       onStatus?.("Waiting for health check");
       await this.waitForHealthy(tenant, 300_000, onStatus);
+
+      // 9. Lock down firewall — close ports 22 and 53 (last direct SSH)
+      onStatus?.("Locking down firewall");
+      const lockdownConn = await connectWithRetry({ host: ip, username: "openclaw" });
+      const lockdownScript = generateLockdownScript();
+      const lockdownResult = await execSSH(
+        lockdownConn,
+        `sudo bash -c ${escapeForBash(lockdownScript)}`,
+        30_000,
+      );
+      lockdownConn.end();
+      if (lockdownResult.code !== 0) {
+        console.warn(`[vps] Firewall lockdown warning for ${tenant.slug}: ${lockdownResult.stderr}`);
+      }
 
       return instanceId;
     } catch (err) {
@@ -148,11 +166,11 @@ export class VpsProvider implements TenantProvider {
     cloud: string,
   ): Promise<void> {
     console.log(`[vps] Rolling back creation of ${tenant.slug}`);
-    const vps = tenant.vpsInstance;
+    const vps = tenant.vps_instances;
 
     // Delete tunnel if created
-    if (vps?.tunnelId) {
-      await deleteTunnel(vps.tunnelId).catch(() => {});
+    if (vps?.tunnel_id) {
+      await deleteTunnel(vps.tunnel_id).catch(() => {});
     }
 
     // Delete VM
@@ -165,86 +183,86 @@ export class VpsProvider implements TenantProvider {
 
     // Mark as error
     if (vps) {
-      await prisma.vpsInstance.update({
-        where: { id: vps.id },
-        data: { vmStatus: "error" },
-      }).catch(() => {});
+      await supabaseAdmin
+        .from("vps_instances")
+        .update({ vm_status: "error" })
+        .eq("id", vps.id)
+        .then(() => {});
     }
   }
 
   async start(tenant: TenantWithVps, onStatus?: StatusCallback): Promise<void> {
-    const vps = tenant.vpsInstance;
+    const vps = tenant.vps_instances;
     if (!vps) throw new Error("No VPS instance");
 
     const cloud = getCloudProvider(vps.cloud);
 
     // Start VM if stopped
-    const info = await cloud.getVmInfo(vps.instanceId, vps.region);
+    const info = await cloud.getVmInfo(vps.instance_id, vps.region);
     if (info.status === "stopped") {
       onStatus?.("Starting VM");
-      await cloud.startVm(vps.instanceId, vps.region);
+      await cloud.startVm(vps.instance_id, vps.region);
       onStatus?.("Waiting for VM to boot");
-      await cloud.waitForReady(vps.instanceId, vps.region);
+      await cloud.waitForReady(vps.instance_id, vps.region);
     }
 
-    // Start the OpenClaw service
-    onStatus?.("Starting OpenClaw service");
-    const ip = vps.externalIp || (await cloud.getVmInfo(vps.instanceId, vps.region)).externalIp;
-    if (!ip) throw new Error("No external IP for VM");
+    // Start the OpenClaw service via tunnel (more retries — cloudflared needs time after VM boot)
+    onStatus?.("Waiting for tunnel to reconnect");
+    if (!vps.tunnel_id) throw new Error("No tunnel configured for VPS");
+    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user, 6);
+    try {
+      onStatus?.("Starting OpenClaw service");
+      await execSSH(tunnel.conn, "sudo systemctl start openclaw", 30_000);
+    } finally {
+      tunnel.close();
+    }
 
-    const conn = await connectWithRetry({ host: ip, username: vps.sshUser });
-    await execSSH(conn, "sudo systemctl start openclaw", 30_000);
-    conn.end();
-
-    await prisma.vpsInstance.update({
-      where: { id: vps.id },
-      data: { vmStatus: "running", externalIp: ip },
-    });
+    await supabaseAdmin
+      .from("vps_instances")
+      .update({ vm_status: "running" })
+      .eq("id", vps.id);
   }
 
   async stop(tenant: TenantWithVps): Promise<void> {
-    const vps = tenant.vpsInstance;
+    const vps = tenant.vps_instances;
     if (!vps) throw new Error("No VPS instance");
 
     // Stop the OpenClaw service (keep VM running to preserve tunnel)
-    if (vps.externalIp) {
+    if (vps.tunnel_id) {
       try {
-        const conn = await connectWithRetry({
-          host: vps.externalIp,
-          username: vps.sshUser,
-        });
-        await execSSH(conn, "sudo systemctl stop openclaw", 30_000);
-        conn.end();
+        const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
+        await execSSH(tunnel.conn, "sudo systemctl stop openclaw", 30_000);
+        tunnel.close();
       } catch {
         // VM may be unreachable
       }
     }
 
-    await prisma.vpsInstance.update({
-      where: { id: vps.id },
-      data: { vmStatus: "stopped" },
-    });
+    await supabaseAdmin
+      .from("vps_instances")
+      .update({ vm_status: "stopped" })
+      .eq("id", vps.id);
   }
 
   async restart(tenant: TenantWithVps): Promise<void> {
-    const vps = tenant.vpsInstance;
-    if (!vps?.externalIp) throw new Error("No VPS instance or IP");
+    const vps = tenant.vps_instances;
+    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
 
-    const conn = await connectWithRetry({
-      host: vps.externalIp,
-      username: vps.sshUser,
-    });
-    await execSSH(conn, "sudo systemctl restart openclaw", 30_000);
-    conn.end();
+    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
+    try {
+      await execSSH(tunnel.conn, "sudo systemctl restart openclaw", 30_000);
+    } finally {
+      tunnel.close();
+    }
   }
 
   async remove(tenant: TenantWithVps): Promise<void> {
-    const vps = tenant.vpsInstance;
+    const vps = tenant.vps_instances;
     if (!vps) return;
 
     // 1. Delete Cloudflare Tunnel
-    if (vps.tunnelId) {
-      await deleteTunnel(vps.tunnelId).catch((e) =>
+    if (vps.tunnel_id) {
+      await deleteTunnel(vps.tunnel_id).catch((e) =>
         console.error("[vps] Failed to delete tunnel:", e),
       );
     }
@@ -252,61 +270,61 @@ export class VpsProvider implements TenantProvider {
     // 2. Delete VM (Access app deletion is handled by the route handler)
     try {
       const cloud = getCloudProvider(vps.cloud);
-      await cloud.deleteVm(vps.instanceId, vps.region);
+      await cloud.deleteVm(vps.instance_id, vps.region);
     } catch (e) {
       console.error("[vps] Failed to delete VM:", e);
     }
   }
 
   async deploy(tenant: TenantWithVps, onStatus?: StatusCallback): Promise<string> {
-    const vps = tenant.vpsInstance;
-    if (!vps?.externalIp) throw new Error("No VPS instance or IP");
+    const vps = tenant.vps_instances;
+    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
 
-    const gitTag = vps.gitTag || OPENCLAW_DEFAULT_GIT_TAG;
+    const gitTag = vps.git_tag || OPENCLAW_DEFAULT_GIT_TAG;
 
     onStatus?.("Connecting to VM");
-    const conn = await connectWithRetry({
-      host: vps.externalIp,
-      username: vps.sshUser,
-    });
+    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
 
-    // Update env vars
-    onStatus?.("Updating configuration");
-    const envVars = await resolveAllEnv(tenant);
-    const configScript = generateWriteConfigScript(envVars, tenant.gatewayToken);
-    await execSSH(
-      conn,
-      `sudo bash -c ${escapeForBash(configScript)}`,
-      30_000,
-    );
+    try {
+      // Update env vars
+      onStatus?.("Updating configuration");
+      const envVars = await resolveAllEnv(tenant);
+      const configScript = generateWriteConfigScript(envVars, tenant.gateway_token);
+      await execSSH(
+        tunnel.conn,
+        `sudo bash -c ${escapeForBash(configScript)}`,
+        30_000,
+      );
 
-    // Deploy new version
-    onStatus?.("Deploying new version");
-    const deployScript = generateDeployScript(gitTag);
-    const result = await execSSH(
-      conn,
-      `sudo bash -c ${escapeForBash(deployScript)}`,
-      300_000,
-    );
-    conn.end();
+      // Deploy new version
+      onStatus?.("Deploying new version");
+      const deployScript = generateDeployScript(gitTag);
+      const result = await execSSH(
+        tunnel.conn,
+        `sudo bash -c ${escapeForBash(deployScript)}`,
+        300_000,
+      );
 
-    if (result.code !== 0) {
-      throw new Error(`Deploy failed: ${result.stderr}`);
+      if (result.code !== 0) {
+        throw new Error(`Deploy failed: ${result.stderr}`);
+      }
+    } finally {
+      tunnel.close();
     }
 
     onStatus?.("Waiting for health check");
     await this.waitForHealthy(tenant, 120_000, onStatus);
 
-    return vps.instanceId;
+    return vps.instance_id;
   }
 
   async getStatus(tenant: TenantWithVps): Promise<string> {
-    const vps = tenant.vpsInstance;
+    const vps = tenant.vps_instances;
     if (!vps) return "stopped";
 
     try {
       const cloud = getCloudProvider(vps.cloud);
-      const info = await cloud.getVmInfo(vps.instanceId, vps.region);
+      const info = await cloud.getVmInfo(vps.instance_id, vps.region);
       return info.status;
     } catch {
       return "unknown";
@@ -348,26 +366,23 @@ export class VpsProvider implements TenantProvider {
   }
 
   async getLogs(tenant: TenantWithVps, tail: number): Promise<NodeJS.ReadableStream> {
-    const vps = tenant.vpsInstance;
-    if (!vps?.externalIp) throw new Error("No VPS instance or IP");
+    const vps = tenant.vps_instances;
+    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
 
-    const conn = await connectWithRetry({
-      host: vps.externalIp,
-      username: vps.sshUser,
-    });
+    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
 
     // Uses ssh2 Client.exec() — remote command over SSH, not local shell
     return new Promise((resolve, reject) => {
-      conn.exec(
+      tunnel.conn.exec(
         `sudo journalctl -u openclaw -f -n ${Number(tail)} --no-pager`,
         (err, stream) => {
           if (err) {
-            conn.end();
+            tunnel.close();
             reject(err);
             return;
           }
-          stream.on("close", () => conn.end());
-          stream.on("error", () => conn.end());
+          stream.on("close", () => tunnel.close());
+          stream.on("error", () => tunnel.close());
           resolve(stream as unknown as NodeJS.ReadableStream);
         },
       );
@@ -375,15 +390,11 @@ export class VpsProvider implements TenantProvider {
   }
 
   async execShell(tenant: TenantWithVps): Promise<ShellHandle> {
-    const vps = tenant.vpsInstance;
-    if (!vps?.externalIp) throw new Error("No VPS instance or IP");
+    const vps = tenant.vps_instances;
+    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
 
-    const conn = await connectWithRetry({
-      host: vps.externalIp,
-      username: vps.sshUser,
-    });
-
-    const channel = await shellSSH(conn);
+    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
+    const channel = await shellSSH(tunnel.conn);
 
     return {
       stream: channel as unknown as Duplex,
@@ -392,22 +403,19 @@ export class VpsProvider implements TenantProvider {
       },
       destroy() {
         channel.close();
-        conn.end();
+        tunnel.close();
       },
     };
   }
 
   async removeTenantData(tenant: TenantWithVps): Promise<void> {
-    const vps = tenant.vpsInstance;
-    if (!vps?.externalIp) return;
+    const vps = tenant.vps_instances;
+    if (!vps?.tunnel_id) return;
 
     try {
-      const conn = await connectWithRetry({
-        host: vps.externalIp,
-        username: vps.sshUser,
-      });
-      await execSSH(conn, "sudo rm -rf /opt/openclaw /etc/openclaw.env", 30_000);
-      conn.end();
+      const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
+      await execSSH(tunnel.conn, "sudo rm -rf /opt/openclaw /etc/openclaw.env", 30_000);
+      tunnel.close();
     } catch {
       // VM may be unreachable
     }

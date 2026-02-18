@@ -1,5 +1,5 @@
 import Docker from "dockerode";
-import { Tenant } from "@prisma/client";
+import type { Tenant } from "@/lib/supabase/types";
 import path from "path";
 import fs from "fs/promises";
 import { resolveAllEnv } from "./key-resolver";
@@ -37,7 +37,7 @@ async function buildEnvVars(tenant: Tenant): Promise<string[]> {
     "HOME=/home/node",
     "TERM=xterm-256color",
     "NODE_OPTIONS=--max-old-space-size=1024",
-    `OPENCLAW_GATEWAY_TOKEN=${tenant.gatewayToken}`,
+    `OPENCLAW_GATEWAY_TOKEN=${tenant.gateway_token}`,
   ];
 
   for (const [key, value] of Object.entries(resolved)) {
@@ -232,8 +232,8 @@ export async function deployContainer(
 
   // 4. Swap: remove old, rename new → canonical
   report("Swapping containers");
-  if (tenant.containerId) {
-    await removeContainer(tenant.containerId);
+  if (tenant.container_id) {
+    await removeContainer(tenant.container_id);
   }
   const newContainer = docker.getContainer(newId);
   await newContainer.rename({ name: canonicalName });

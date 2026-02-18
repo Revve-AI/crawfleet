@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
 import { BASE_DOMAIN, FLEET_TLS, OPENCLAW_IMAGE, CLOUD_NAMES } from "@/lib/constants";
 import NavShell from "@/components/NavShell";
@@ -14,18 +14,19 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
   const { slug } = await params;
   const email = await getAuthEmail();
   const admin = isFleetAdmin(email);
-  const tenant = await prisma.tenant.findUnique({
-    where: { slug },
-    include: { vpsInstance: true },
-  });
+  const { data: tenant } = await supabaseAdmin
+    .from("tenants")
+    .select("*, vps_instances(*)")
+    .eq("slug", slug)
+    .single();
   if (!tenant) notFound();
   if (!admin && tenant.email !== email) notFound();
 
   const scheme = FLEET_TLS ? "https" : "http";
   const instanceUrl = `${scheme}://${tenant.slug}.${BASE_DOMAIN}`;
-  const openUrl = `${instanceUrl}/?token=${tenant.gatewayToken}`;
+  const openUrl = `${instanceUrl}/?token=${tenant.gateway_token}`;
 
-  const vps = tenant.vpsInstance;
+  const vps = tenant.vps_instances;
 
   return (
     <NavShell isAdmin={admin}>
@@ -40,24 +41,24 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
           </a>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">{tenant.displayName}</h1>
+              <h1 className="text-2xl font-bold tracking-tight">{tenant.display_name}</h1>
               <div className="flex items-center gap-2 mt-0.5">
                 <p className="text-zinc-500 text-sm font-mono">{tenant.slug}</p>
                 <ProviderBadge provider={tenant.provider} cloud={vps?.cloud} />
               </div>
             </div>
-            <StatusBadge status={tenant.containerStatus} />
+            <StatusBadge status={tenant.container_status} />
           </div>
         </div>
 
         {/* Status strip */}
         <div className={`grid gap-3 ${vps ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2"}`}>
-          <InfoCard label={tenant.provider === "docker" ? "Container" : "VM"} value={tenant.containerStatus} />
-          <InfoCard label="Health" value={tenant.lastHealthStatus || "unknown"} />
+          <InfoCard label={tenant.provider === "docker" ? "Container" : "VM"} value={tenant.container_status} />
+          <InfoCard label="Health" value={tenant.last_health_status || "unknown"} />
           {vps && (
             <>
               <InfoCard label="Region" value={vps.region} />
-              <InfoCard label="Machine" value={vps.machineType} />
+              <InfoCard label="Machine" value={vps.machine_type} />
             </>
           )}
         </div>
@@ -73,23 +74,23 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
               </div>
               <div className="flex items-baseline gap-3">
                 <span className="text-zinc-500 text-xs w-16 shrink-0">Instance</span>
-                <code className="text-zinc-200 font-mono text-xs">{vps.instanceId || "—"}</code>
+                <code className="text-zinc-200 font-mono text-xs">{vps.instance_id || "—"}</code>
               </div>
               <div className="flex items-baseline gap-3">
                 <span className="text-zinc-500 text-xs w-16 shrink-0">IP</span>
-                <code className="text-zinc-200 font-mono text-xs">{vps.externalIp || "—"}</code>
+                <code className="text-zinc-200 font-mono text-xs">{vps.external_ip || "—"}</code>
               </div>
               <div className="flex items-baseline gap-3">
                 <span className="text-zinc-500 text-xs w-16 shrink-0">Git Tag</span>
-                <code className="text-zinc-200 font-mono text-xs">{vps.gitTag || "latest"}</code>
+                <code className="text-zinc-200 font-mono text-xs">{vps.git_tag || "latest"}</code>
               </div>
               <div className="flex items-baseline gap-3">
                 <span className="text-zinc-500 text-xs w-16 shrink-0">Tunnel</span>
-                <span className="text-zinc-200 text-xs">{vps.tunnelId ? "Connected" : "—"}</span>
+                <span className="text-zinc-200 text-xs">{vps.tunnel_id ? "Connected" : "—"}</span>
               </div>
               <div className="flex items-baseline gap-3">
                 <span className="text-zinc-500 text-xs w-16 shrink-0">VM Status</span>
-                <span className="text-zinc-200 text-xs">{vps.vmStatus}</span>
+                <span className="text-zinc-200 text-xs">{vps.vm_status}</span>
               </div>
             </div>
           </div>
@@ -105,7 +106,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
             </div>
             <div className="flex items-baseline gap-3 text-sm">
               <span className="text-zinc-500 text-xs w-12 shrink-0">Token</span>
-              <code className="text-zinc-200 font-mono text-xs break-all">{tenant.gatewayToken}</code>
+              <code className="text-zinc-200 font-mono text-xs break-all">{tenant.gateway_token}</code>
             </div>
           </div>
           <div className="flex gap-2 pt-1">
@@ -140,12 +141,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
         {/* Lifecycle controls */}
         <TenantActions
           slug={tenant.slug}
-          status={tenant.containerStatus}
+          status={tenant.container_status}
           isAdmin={admin}
           currentImage={tenant.image}
           defaultImage={OPENCLAW_IMAGE}
           provider={tenant.provider}
-          currentGitTag={vps?.gitTag}
+          currentGitTag={vps?.git_tag}
         />
 
         {/* Configuration (admin only) */}
@@ -154,8 +155,9 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
             <h2 className="text-lg font-semibold mb-4 tracking-tight">Configuration</h2>
             <TenantForm mode="edit" initial={{
               ...tenant,
+              displayName: tenant.display_name,
               email: tenant.email ?? undefined,
-              envOverrideKeys: Object.keys(tenant.envOverrides ? JSON.parse(tenant.envOverrides) : {}),
+              envOverrideKeys: Object.keys(tenant.env_overrides || {}),
             }} />
           </div>
         )}

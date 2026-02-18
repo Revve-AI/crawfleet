@@ -167,7 +167,7 @@ export default function TenantForm({ initial, mode }: Props) {
         const tenant = data.data;
         if (!tenant) return;
 
-        if (tenant.containerStatus === "running") {
+        if (tenant.container_status === "running") {
           clearInterval(pollRef.current!);
           setProvision({ phase: "ready", slug: tenantSlug });
         }

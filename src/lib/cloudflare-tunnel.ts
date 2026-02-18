@@ -66,6 +66,10 @@ export async function configureTunnelIngress(
             service: "http://localhost:18789",
           },
           {
+            hostname: `ssh-${slug}.${baseDomain}`,
+            service: "ssh://localhost:22",
+          },
+          {
             service: "http_status:404",
           },
         ],
@@ -82,6 +86,19 @@ export async function createTunnelDNS(
   await cfApi(`/zones/${CLOUDFLARE_ZONE_ID}/dns_records`, "POST", {
     type: "CNAME",
     name: `${slug}.${baseDomain}`,
+    content: `${tunnelId}.cfargotunnel.com`,
+    proxied: true,
+  });
+}
+
+export async function createTunnelSSHDNS(
+  slug: string,
+  tunnelId: string,
+  baseDomain: string,
+): Promise<void> {
+  await cfApi(`/zones/${CLOUDFLARE_ZONE_ID}/dns_records`, "POST", {
+    type: "CNAME",
+    name: `ssh-${slug}.${baseDomain}`,
     content: `${tunnelId}.cfargotunnel.com`,
     proxied: true,
   });

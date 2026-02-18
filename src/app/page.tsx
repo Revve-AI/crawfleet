@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
 import NavShell from "@/components/NavShell";
 import FleetStats from "@/components/FleetStats";
@@ -10,15 +10,21 @@ export default async function DashboardPage() {
 
   const email = await getAuthEmail();
   const admin = isFleetAdmin(email);
-  const where = admin ? {} : { email };
-  const tenants = await prisma.tenant.findMany({ where, orderBy: { createdAt: "desc" } });
+
+  let query = supabaseAdmin
+    .from("tenants")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (!admin) query = query.eq("email", email);
+  const { data: tenants } = await query;
+  const list = tenants || [];
 
   const stats = {
-    total: tenants.length,
-    running: tenants.filter((t) => t.containerStatus === "running").length,
-    stopped: tenants.filter((t) => t.containerStatus === "stopped").length,
-    healthy: tenants.filter((t) => t.lastHealthStatus === "healthy").length,
-    unhealthy: tenants.filter((t) => t.lastHealthStatus === "unhealthy").length,
+    total: list.length,
+    running: list.filter((t) => t.container_status === "running").length,
+    stopped: list.filter((t) => t.container_status === "stopped").length,
+    healthy: list.filter((t) => t.last_health_status === "healthy").length,
+    unhealthy: list.filter((t) => t.last_health_status === "unhealthy").length,
   };
 
   return (
@@ -47,14 +53,14 @@ export default async function DashboardPage() {
               </a>
             )}
           </div>
-          {tenants.length === 0 ? (
+          {list.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-zinc-500">No tenants yet.</p>
               <p className="text-zinc-600 text-sm mt-1">Create one to get started.</p>
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {tenants.slice(0, 6).map((t) => (
+              {list.slice(0, 6).map((t) => (
                 <TenantCard key={t.id} tenant={t} />
               ))}
             </div>

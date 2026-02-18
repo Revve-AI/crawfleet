@@ -1,24 +1,22 @@
-import { prisma } from "./db";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getProvider } from "./providers";
+import type { TenantWithVps } from "@/lib/supabase/types";
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 export async function checkAllHealth(): Promise<void> {
-  const tenants = await prisma.tenant.findMany({
-    where: {
-      OR: [
-        { containerId: { not: null } },
-        { provider: "vps" },
-      ],
-    },
-    include: { vpsInstance: true },
-  });
+  const { data: tenants } = await supabaseAdmin
+    .from("tenants")
+    .select("*, vps_instances(*)")
+    .or("container_id.not.is.null,provider.eq.vps");
 
-  for (const tenant of tenants) {
+  if (!tenants) return;
+
+  for (const tenant of tenants as TenantWithVps[]) {
     // Skip Docker tenants without containers
-    if (tenant.provider === "docker" && !tenant.containerId) continue;
+    if (tenant.provider === "docker" && !tenant.container_id) continue;
     // Skip VPS tenants without instances
-    if (tenant.provider === "vps" && !tenant.vpsInstance) continue;
+    if (tenant.provider === "vps" && !tenant.vps_instances) continue;
 
     try {
       const provider = await getProvider(tenant);
@@ -27,14 +25,14 @@ export async function checkAllHealth(): Promise<void> {
         ? await provider.getHealth(tenant)
         : "unknown";
 
-      await prisma.tenant.update({
-        where: { id: tenant.id },
-        data: {
-          containerStatus: status,
-          lastHealthCheck: new Date(),
-          lastHealthStatus: health,
-        },
-      });
+      await supabaseAdmin
+        .from("tenants")
+        .update({
+          container_status: status,
+          last_health_check: new Date().toISOString(),
+          last_health_status: health,
+        })
+        .eq("id", tenant.id);
     } catch {
       // Individual health check failure shouldn't stop the loop
     }

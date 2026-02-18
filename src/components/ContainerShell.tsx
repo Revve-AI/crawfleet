@@ -72,7 +72,23 @@ export default function ContainerShell({ slug }: { slug: string }) {
     }
 
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${proto}//${window.location.host}/api/tenants/${slug}/shell`;
+    let wsUrl = `${proto}//${window.location.host}/api/tenants/${slug}/shell`;
+
+    // Pass Supabase access token for WebSocket auth
+    try {
+      const { createBrowserClient } = await import("@supabase/ssr");
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      );
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        wsUrl += `?access_token=${encodeURIComponent(session.access_token)}`;
+      }
+    } catch {
+      // Dev mode or session unavailable — server will handle
+    }
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

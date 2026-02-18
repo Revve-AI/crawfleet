@@ -1,10 +1,12 @@
-import { Tenant } from "@prisma/client";
-import { prisma } from "./db";
+import type { Tenant } from "@/lib/supabase/types";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 function parseTenantOverrides(tenant: Tenant): Record<string, string> {
-  if (!tenant.envOverrides) return {};
+  if (!tenant.env_overrides) return {};
+  // env_overrides is native jsonb — already an object
+  if (typeof tenant.env_overrides === "object") return tenant.env_overrides;
   try {
-    return JSON.parse(tenant.envOverrides);
+    return JSON.parse(tenant.env_overrides as unknown as string);
   } catch {
     return {};
   }
@@ -12,16 +14,20 @@ function parseTenantOverrides(tenant: Tenant): Record<string, string> {
 
 /**
  * Resolve a single env key through the fallback chain:
- *   1. Tenant-level override (envOverrides JSON)
- *   2. Global DB setting (GlobalSetting table)
+ *   1. Tenant-level override (env_overrides jsonb)
+ *   2. Global DB setting (global_settings table)
  *   3. process.env fallback
  */
 export async function resolveEnv(tenant: Tenant, key: string): Promise<string | undefined> {
   const overrides = parseTenantOverrides(tenant);
   if (overrides[key]) return overrides[key];
 
-  const global = await prisma.globalSetting.findUnique({ where: { key } });
-  if (global) return global.value;
+  const { data } = await supabaseAdmin
+    .from("global_settings")
+    .select("value")
+    .eq("key", key)
+    .single();
+  if (data) return data.value;
 
   return process.env[key] || undefined;
 }
@@ -32,12 +38,15 @@ export async function resolveEnv(tenant: Tenant, key: string): Promise<string | 
 export async function resolveEnvBatch(tenant: Tenant, keys: string[]): Promise<Record<string, string>> {
   const overrides = parseTenantOverrides(tenant);
 
-  // Only query DB for keys not already resolved by tenant overrides
   const missingFromOverrides = keys.filter((k) => !overrides[k]);
-  const globals = missingFromOverrides.length > 0
-    ? await prisma.globalSetting.findMany({ where: { key: { in: missingFromOverrides } } })
-    : [];
-  const globalMap = new Map(globals.map((g) => [g.key, g.value]));
+  const { data: globals } = missingFromOverrides.length > 0
+    ? await supabaseAdmin
+        .from("global_settings")
+        .select("key, value")
+        .in("key", missingFromOverrides)
+    : { data: [] };
+
+  const globalMap = new Map((globals || []).map((g) => [g.key, g.value]));
 
   const result: Record<string, string> = {};
   for (const key of keys) {
@@ -53,10 +62,12 @@ export async function resolveEnvBatch(tenant: Tenant, keys: string[]): Promise<R
  */
 export async function resolveAllEnv(tenant: Tenant): Promise<Record<string, string>> {
   const overrides = parseTenantOverrides(tenant);
-  const globals = await prisma.globalSetting.findMany();
+  const { data: globals } = await supabaseAdmin
+    .from("global_settings")
+    .select("key, value");
 
   const result: Record<string, string> = {};
-  for (const g of globals) {
+  for (const g of globals || []) {
     result[g.key] = g.value;
   }
   // Tenant overrides win

@@ -3,26 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "esbuild server.ts --bundle --platform=node --packages=external --format=esm --outfile=.dev-server.mjs && node .dev-server.mjs",
+    "dev": "esbuild server.ts --bundle --platform=node --packages=external --format=esm --outfile=.dev-server.mjs && node --env-file=.env .dev-server.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "node-pg-migrate up --migrations-dir migrations --database-url-var DATABASE_URL",
+    "db:migrate:down": "node-pg-migrate down --migrations-dir migrations --database-url-var DATABASE_URL",
+    "db:migrate:new": "node-pg-migrate create --migrations-dir migrations"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@google-cloud/compute": "^6.7.0",
     "@google-cloud/storage": "^7.0.0",
-    "@prisma/client": "^6.2.0",
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.49.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "dockerode": "^4.0.4",
-    "iron-session": "^8.0.4",
-    "jose": "^6.1.3",
+    "dotenv": "^17.3.1",
     "next": "^15.1.0",
+    "node-pg-migrate": "^7.9.1",
+    "pg": "^8.13.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ssh2": "^1.17.0",
@@ -33,6 +35,7 @@
     "@tailwindcss/postcss": "^4.0.0",
     "@types/dockerode": "^3.3.34",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.11",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ssh2": "^1.15.5",
@@ -40,17 +43,13 @@
     "esbuild": "^0.27.3",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.1.0",
-    "prisma": "^6.2.0",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "@prisma/client",
-      "@prisma/engines",
-      "esbuild",
-      "prisma"
+      "esbuild"
     ]
   }
 }

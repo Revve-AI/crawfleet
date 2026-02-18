@@ -1,6 +1,10 @@
 import { Client as SSHClient, ClientChannel } from "ssh2";
 import fs from "fs";
-import { VPS_SSH_KEY_PATH } from "../constants";
+import { VPS_SSH_KEY_PATH, CLOUDFLARE_DOMAIN } from "../constants";
+import {
+  startCloudflaredProxy,
+  type CloudflaredProxy,
+} from "./cloudflared-proxy";
 
 export interface SSHConfig {
   host: string;
@@ -107,6 +111,49 @@ export async function connectWithRetry(
     try {
       return await connectSSH(config);
     } catch (err) {
+      lastErr = err as Error;
+      if (i < retries - 1) {
+        const delay = 5_000 * Math.pow(2, i);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+export interface TunnelSSHConnection {
+  conn: SSHClient;
+  proxy: CloudflaredProxy;
+  close(): void;
+}
+
+export async function connectSSHThroughTunnel(
+  slug: string,
+  username: string,
+  retries = 3,
+): Promise<TunnelSSHConnection> {
+  const sshHostname = `ssh-${slug}.${CLOUDFLARE_DOMAIN}`;
+  let lastErr: Error | undefined;
+
+  for (let i = 0; i < retries; i++) {
+    let proxy: CloudflaredProxy | undefined;
+    try {
+      proxy = await startCloudflaredProxy(sshHostname);
+      const conn = await connectSSH({
+        host: "127.0.0.1",
+        port: proxy.localPort,
+        username,
+      });
+      return {
+        conn,
+        proxy,
+        close() {
+          conn.end();
+          proxy!.kill();
+        },
+      };
+    } catch (err) {
+      proxy?.kill();
       lastErr = err as Error;
       if (i < retries - 1) {
         const delay = 5_000 * Math.pow(2, i);
