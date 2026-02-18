@@ -76,7 +76,7 @@ Type=simple
 User=openclaw
 EnvironmentFile=/etc/openclaw.env
 ExecStart=\${OPENCLAW_BIN} gateway --allow-unconfigured
-Restart=unless-stopped
+Restart=on-failure
 RestartSec=5
 
 [Install]

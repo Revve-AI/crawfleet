@@ -124,15 +124,26 @@ export class VpsProvider implements TenantProvider {
       await execSSH(conn, "sudo systemctl start openclaw", 30_000);
       conn.end();
 
-      // 7. Update status
+      // 7. Wait for health (OpenClaw takes ~3 min to start on small VMs)
+      onStatus?.("Waiting for health check");
+      const healthy = await this.waitForHealthy(tenant, 300_000, onStatus);
+
+      if (!healthy) {
+        // Service didn't come up — leave SSH open for debugging, don't lock down
+        console.error(`[vps] Health check failed for ${tenant.slug} — skipping firewall lockdown`);
+        await supabaseAdmin
+          .from("vps_instances")
+          .update({ vm_status: "error" })
+          .eq("id", vps.id);
+        onStatus?.("VM created but OpenClaw failed to start — SSH left open for debugging");
+        return instanceId;
+      }
+
+      // 8. Update status
       await supabaseAdmin
         .from("vps_instances")
         .update({ vm_status: "running" })
         .eq("id", vps.id);
-
-      // 8. Wait for health (OpenClaw takes ~3 min to start on small VMs)
-      onStatus?.("Waiting for health check");
-      await this.waitForHealthy(tenant, 300_000, onStatus);
 
       // 9. Lock down firewall — close ports 22 and 53 (last direct SSH)
       onStatus?.("Locking down firewall");
