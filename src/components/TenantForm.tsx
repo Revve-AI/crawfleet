@@ -117,6 +117,7 @@ export default function TenantForm({ initial, mode }: Props) {
         body: JSON.stringify(body),
       });
 
+      let completed = false;
       let failed = false;
       await readSSE(res, ({ event, data }) => {
         if (event === "status") {
@@ -130,17 +131,50 @@ export default function TenantForm({ initial, mode }: Props) {
           setProvision({ phase: "form" });
           failed = true;
         } else if (event === "done") {
+          completed = true;
           setProvision({ phase: "ready", slug: (data.slug as string) || slug });
         }
       });
 
       if (failed) return;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-      setProvision({ phase: "form" });
+      // Stream ended cleanly without done/error — server may still be working
+      if (!completed) {
+        pollForCompletion(slug);
+        return;
+      }
+    } catch {
+      // SSE stream dropped (Cloudflare timeout, network issue) — poll to check
+      pollForCompletion(slug);
+      return;
     } finally {
       setLoading(false);
     }
+  }
+
+  function pollForCompletion(tenantSlug: string) {
+    setLoading(false);
+    setProvision((prev) =>
+      prev.phase === "provisioning"
+        ? { ...prev, steps: [...prev.steps, "Connection lost — checking status..."] }
+        : prev,
+    );
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/tenants/${tenantSlug}`);
+        if (!res.ok) return; // tenant may not exist yet (still creating)
+        const data = await res.json();
+        const tenant = data.data;
+        if (!tenant) return;
+
+        if (tenant.containerStatus === "running") {
+          clearInterval(pollRef.current!);
+          setProvision({ phase: "ready", slug: tenantSlug });
+        }
+      } catch {
+        // keep polling
+      }
+    }, 5000);
   }
 
   async function handleSubmit(e: React.FormEvent) {

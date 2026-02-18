@@ -36,6 +36,7 @@ export default function TenantActions({
     setLoading(act);
     setActionStatus("Connecting...");
     let failed = false;
+    let completed = false;
     try {
       const res = await fetch(url, { method: "POST", ...opts });
       await readSSE(res, ({ event, data }) => {
@@ -45,14 +46,24 @@ export default function TenantActions({
           setActionStatus(`Failed: ${data.error}`);
           failed = true;
         } else if (event === "done") {
+          completed = true;
           setActionStatus("Complete");
         }
       });
-      if (!failed) router.refresh();
-      return !failed;
-    } catch (e) {
-      setActionStatus(`Error: ${e instanceof Error ? e.message : "unknown"}`);
-      return false;
+      if (failed) return false;
+      if (!completed) {
+        // Stream ended without done/error — server may still be working
+        setActionStatus("Connection lost — operation may still be in progress. Refresh to check.");
+        router.refresh();
+        return true;
+      }
+      router.refresh();
+      return true;
+    } catch {
+      // SSE stream dropped (Cloudflare timeout, network issue)
+      setActionStatus("Connection lost — operation may still be in progress. Refresh to check.");
+      router.refresh();
+      return true;
     } finally {
       setLoading("");
     }

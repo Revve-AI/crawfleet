@@ -86,8 +86,10 @@ export class VpsProvider implements TenantProvider {
         `sudo bash -c ${escapeForBash(setupScript)}`,
         600_000, // 10 min timeout for setup (npm install + build is slow)
       );
+      console.log(`[vps] Setup stdout for ${tenant.slug}:\n${setupResult.stdout}`);
+      if (setupResult.stderr) console.error(`[vps] Setup stderr for ${tenant.slug}:\n${setupResult.stderr}`);
       if (setupResult.code !== 0) {
-        throw new Error(`Setup script failed: ${setupResult.stderr}`);
+        throw new Error(`Setup script failed (exit ${setupResult.code}):\nSTDOUT: ${setupResult.stdout.slice(-2000)}\nSTDERR: ${setupResult.stderr.slice(-2000)}`);
       }
 
       // 4. Create Cloudflare Tunnel
@@ -110,7 +112,7 @@ export class VpsProvider implements TenantProvider {
         120_000,
       );
       if (cfResult.code !== 0) {
-        throw new Error(`cloudflared install failed: ${cfResult.stderr}`);
+        throw new Error(`cloudflared install failed (exit ${cfResult.code}):\nSTDOUT: ${cfResult.stdout.slice(-2000)}\nSTDERR: ${cfResult.stderr.slice(-2000)}`);
       }
 
       // 6. Start OpenClaw
@@ -130,6 +132,7 @@ export class VpsProvider implements TenantProvider {
 
       return instanceId;
     } catch (err) {
+      console.error(`[vps] Creation failed for ${tenant.slug}:`, err);
       // Rollback on failure
       await this.rollbackCreate(tenant, instanceId, vps.region, vps.cloud).catch((e) =>
         console.error("[vps] Rollback error:", e),

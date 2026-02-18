@@ -78,12 +78,14 @@ step_tunnel() {
   echo "=== Step 6: Update tunnel ingress ==="
   CF_ACCT="${CLOUDFLARE_ACCOUNT_ID:-}"
   CF_TOKEN="${CLOUDFLARE_API_KEY:-}"
+  TUNNEL_DOMAIN="${CLOUDFLARE_DOMAIN:-${BASE_DOMAIN}}"
 
   if [ -z "$CF_ACCT" ] || [ -z "$CF_TOKEN" ]; then
     echo "SKIP: CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_KEY not set — configure tunnel manually"
     return
   fi
 
+  echo "Using domain: ${TUNNEL_DOMAIN}"
   curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${CF_ACCT}/cfd_tunnel/${DEPLOY_TUNNEL_ID}/configurations" \
     -H "Authorization: Bearer ${CF_TOKEN}" \
     -H "Content-Type: application/json" \
@@ -91,17 +93,17 @@ step_tunnel() {
       "config": {
         "ingress": [
           {"hostname": "'"${DEPLOY_HOST}"'", "service": "ssh://localhost:22"},
-          {"hostname": "fleet.'"${BASE_DOMAIN}"'", "service": "http://localhost:80"},
-          {"hostname": "*.'"${BASE_DOMAIN}"'", "service": "http://localhost:80"},
+          {"hostname": "fleet.'"${TUNNEL_DOMAIN}"'", "service": "http://localhost:80"},
+          {"hostname": "*.'"${TUNNEL_DOMAIN}"'", "service": "http://localhost:80"},
           {"service": "http_status:404"}
         ]
       }
     }'
   echo ""
 
-  cloudflared tunnel route dns "${DEPLOY_INSTANCE}" "fleet.${BASE_DOMAIN}" 2>/dev/null || true
+  cloudflared tunnel route dns "${DEPLOY_INSTANCE}" "fleet.${TUNNEL_DOMAIN}" 2>/dev/null || true
   echo "Tunnel ingress updated"
-  echo "NOTE: Wildcard *.${BASE_DOMAIN} CNAME to ${DEPLOY_TUNNEL_ID}.cfargotunnel.com must be set in Cloudflare dashboard"
+  echo "NOTE: Wildcard *.${TUNNEL_DOMAIN} CNAME to ${DEPLOY_TUNNEL_ID}.cfargotunnel.com must be set in Cloudflare dashboard"
 }
 
 step_deploy() {

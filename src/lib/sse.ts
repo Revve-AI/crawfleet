@@ -38,10 +38,16 @@ export function sseResponse(
 
   const readable = new ReadableStream({
     async start(controller) {
+      let closed = false;
       const send: SSESend = (event, data) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+        if (closed) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          closed = true;
+        }
       };
       try {
         await handler(send);
@@ -49,7 +55,9 @@ export function sseResponse(
         const message = e instanceof Error ? e.message : "Unknown error";
         send("error", { error: message });
       } finally {
-        controller.close();
+        if (!closed) {
+          try { controller.close(); } catch { /* already closed */ }
+        }
       }
     },
   });
