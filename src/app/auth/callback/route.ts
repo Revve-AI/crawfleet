@@ -3,9 +3,15 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
   const next = searchParams.get("next") ?? "/";
+
+  // request.url uses the internal bind address (0.0.0.0:3000) behind Cloudflare Tunnel,
+  // so derive the public origin from forwarded headers instead.
+  const proto = request.headers.get("x-forwarded-proto") || "https";
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host") || "localhost:3000";
+  const origin = `${proto}://${host}`;
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login`);

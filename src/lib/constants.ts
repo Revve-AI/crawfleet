@@ -1,10 +1,6 @@
 export const BASE_DOMAIN = process.env.BASE_DOMAIN || "openclaw.example.com";
 export const DATA_DIR = process.env.DATA_DIR || "./data";
 export const FLEET_TLS = process.env.FLEET_TLS !== "false";
-export const BACKUP_BUCKET = process.env.BACKUP_BUCKET || "";
-export const BACKUP_INTERVAL_MS =
-  parseInt(process.env.BACKUP_INTERVAL_MIN || "15", 10) * 60_000;
-
 // Cloud display names
 export const CLOUD_NAMES: Record<string, string> = {
   gcp: "Google Cloud",
