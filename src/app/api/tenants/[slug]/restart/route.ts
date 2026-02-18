@@ -11,11 +11,11 @@ export async function POST(_req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
 
-    const provider = await getProvider(tenant);
+    const provider = await getProvider();
     await provider.restart(tenant);
     await supabaseAdmin
       .from("tenants")
-      .update({ container_status: "running" })
+      .update({ status: "running" })
       .eq("slug", slug);
 
     await supabaseAdmin.from("audit_logs").insert({

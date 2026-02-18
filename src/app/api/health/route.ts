@@ -9,7 +9,7 @@ export async function GET() {
     const email = await getAuthEmail();
     const admin = isFleetAdmin(email);
 
-    let query = supabaseAdmin.from("tenants").select("container_status, last_health_status");
+    let query = supabaseAdmin.from("tenants").select("status, last_health_status");
     if (!admin) {
       query = query.eq("email", email);
     }
@@ -19,8 +19,8 @@ export async function GET() {
 
     const stats: FleetStats = {
       total: list.length,
-      running: list.filter((t) => t.container_status === "running").length,
-      stopped: list.filter((t) => t.container_status === "stopped").length,
+      running: list.filter((t) => t.status === "running").length,
+      stopped: list.filter((t) => t.status === "stopped").length,
       healthy: list.filter((t) => t.last_health_status === "healthy").length,
       unhealthy: list.filter((t) => t.last_health_status === "unhealthy").length,
     };

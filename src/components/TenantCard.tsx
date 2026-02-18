@@ -8,9 +8,8 @@ interface Tenant {
   slug: string;
   display_name: string;
   email?: string | null;
-  container_status: string;
+  status: string;
   last_health_status: string | null;
-  provider: string;
   vps_instances?: { cloud: string } | null;
 }
 
@@ -21,7 +20,7 @@ const accentMap: Record<string, string> = {
 };
 
 export default function TenantCard({ tenant }: { tenant: Tenant }) {
-  const accent = accentMap[tenant.container_status] || accentMap.stopped;
+  const accent = accentMap[tenant.status] || accentMap.stopped;
 
   return (
     <Link
@@ -32,18 +31,16 @@ export default function TenantCard({ tenant }: { tenant: Tenant }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="font-semibold text-zinc-100 truncate">{tenant.display_name}</h3>
-            {tenant.provider === "vps" && (
-              <span className="inline-flex items-center px-1.5 py-0.5 bg-violet-500/10 text-violet-400 text-[10px] font-medium rounded border border-violet-500/20 shrink-0">
-                {(tenant.vps_instances?.cloud && CLOUD_SHORT_NAMES[tenant.vps_instances.cloud]) || "VPS"}
-              </span>
-            )}
+            <span className="inline-flex items-center px-1.5 py-0.5 bg-violet-500/10 text-violet-400 text-[10px] font-medium rounded border border-violet-500/20 shrink-0">
+              {(tenant.vps_instances?.cloud && CLOUD_SHORT_NAMES[tenant.vps_instances.cloud]) || "VPS"}
+            </span>
           </div>
           <p className="text-sm text-zinc-500 mt-0.5 truncate">
             <span className="font-mono text-xs">{tenant.slug}</span>
             {tenant.email && <span className="text-zinc-600"> &middot; {tenant.email}</span>}
           </p>
         </div>
-        <StatusBadge status={tenant.container_status} />
+        <StatusBadge status={tenant.status} />
       </div>
     </Link>
   );

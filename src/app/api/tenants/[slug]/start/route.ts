@@ -11,21 +11,13 @@ export async function POST(_req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
 
-    const provider = await getProvider(tenant);
+    const provider = await getProvider();
 
     await provider.start(tenant, (s) => send("status", { step: s }));
     await supabaseAdmin
       .from("tenants")
-      .update({ container_status: "running" })
+      .update({ status: "running" })
       .eq("slug", slug);
-
-    // For Docker: persist container_id if it was created during start
-    if (tenant.provider === "docker" && tenant.container_id) {
-      await supabaseAdmin
-        .from("tenants")
-        .update({ container_id: tenant.container_id })
-        .eq("slug", slug);
-    }
 
     send("status", { step: "Waiting for health check" });
     const healthy = await provider.waitForHealthy(tenant, 120_000, (s) => send("status", { step: s }));
@@ -39,6 +31,6 @@ export async function POST(_req: NextRequest, { params }: Params) {
       action: "tenant.started",
     });
 
-    send("done", { containerId: tenant.container_id });
+    send("done", { slug });
   });
 }

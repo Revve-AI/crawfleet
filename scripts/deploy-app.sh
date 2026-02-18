@@ -54,7 +54,7 @@ step_build() {
 }
 
 step_auth() {
-  echo "=== Step 4: Configure server Docker auth ==="
+  echo "=== Step 3: Configure server Docker auth ==="
   result=$(remote "gcloud auth configure-docker $REGISTRY_HOST --quiet 2>/dev/null && echo GCLOUD_OK || echo GCLOUD_MISSING")
   if echo "$result" | grep -q "GCLOUD_MISSING"; then
     echo "gcloud missing on server — installing..."
@@ -69,13 +69,8 @@ step_auth() {
   fi
 }
 
-step_network() {
-  echo "=== Step 5: Set up Docker network ==="
-  remote "docker network create fleet-proxy 2>/dev/null || true; echo NETWORK_OK"
-}
-
 step_tunnel() {
-  echo "=== Step 6: Update tunnel ingress ==="
+  echo "=== Step 4: Update tunnel ingress ==="
   CF_ACCT="${CLOUDFLARE_ACCOUNT_ID:-}"
   CF_TOKEN="${CLOUDFLARE_API_KEY:-}"
   TUNNEL_DOMAIN="${CLOUDFLARE_DOMAIN:-${BASE_DOMAIN}}"
@@ -93,8 +88,7 @@ step_tunnel() {
       "config": {
         "ingress": [
           {"hostname": "'"${DEPLOY_HOST}"'", "service": "ssh://localhost:22"},
-          {"hostname": "fleet.'"${TUNNEL_DOMAIN}"'", "service": "http://localhost:80"},
-          {"hostname": "*.'"${TUNNEL_DOMAIN}"'", "service": "http://localhost:80"},
+          {"hostname": "fleet.'"${TUNNEL_DOMAIN}"'", "service": "http://localhost:3000"},
           {"service": "http_status:404"}
         ]
       }
@@ -103,18 +97,17 @@ step_tunnel() {
 
   cloudflared tunnel route dns "${DEPLOY_INSTANCE}" "fleet.${TUNNEL_DOMAIN}" 2>/dev/null || true
   echo "Tunnel ingress updated"
-  echo "NOTE: Wildcard *.${TUNNEL_DOMAIN} CNAME to ${DEPLOY_TUNNEL_ID}.cfargotunnel.com must be set in Cloudflare dashboard"
 }
 
 step_deploy() {
-  echo "=== Step 7: Pull and start ==="
+  echo "=== Step 5: Pull and start ==="
   remote "cd ~/openclaw-fleet && docker compose pull && docker compose up -d"
   echo ""
   remote "cd ~/openclaw-fleet && docker compose ps"
 }
 
 step_verify() {
-  echo "=== Step 8: Verify ==="
+  echo "=== Step 6: Verify ==="
   echo "Checking dashboard..."
   remote "curl -sL -o /dev/null -w '%{http_code}' http://localhost:3000" || true
   echo ""
@@ -142,7 +135,6 @@ case "$STEP" in
   docker)   step_docker ;;
   build)    step_build ;;
   auth)     step_auth ;;
-  network)  step_network ;;
   tunnel)   step_tunnel ;;
   deploy)   step_build; step_deploy; step_verify; step_report ;;
   start)    step_deploy ;;
@@ -154,14 +146,13 @@ case "$STEP" in
     step_docker
     step_build
     step_auth
-    step_network
     step_tunnel
     step_deploy
     step_verify
     step_report
     ;;
   *)
-    echo "Usage: $0 [docker|build|auth|network|tunnel|deploy|start|verify|all]"
+    echo "Usage: $0 [docker|build|auth|tunnel|deploy|start|verify|all]"
     echo ""
     echo "  all      — run all steps (default)"
     echo "  build    — build dashboard image and push to registry"
@@ -172,7 +163,6 @@ case "$STEP" in
     echo "First-time setup steps:"
     echo "  docker   — install Docker on server"
     echo "  auth     — configure server gcloud/docker auth"
-    echo "  network  — create fleet-proxy Docker network"
     echo "  tunnel   — update Cloudflare tunnel ingress"
     exit 1
     ;;

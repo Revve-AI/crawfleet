@@ -42,7 +42,6 @@ export default function TenantForm({ initial, mode }: Props) {
   const [envOverrides, setEnvOverrides] = useState<Record<string, string>>({});
 
   // VPS fields
-  const [provider, setProvider] = useState<"docker" | "vps">("docker");
   const [clouds, setClouds] = useState<CloudInfo[]>([]);
   const [cloud, setCloud] = useState("");
   const [region, setRegion] = useState("");
@@ -56,9 +55,9 @@ export default function TenantForm({ initial, mode }: Props) {
     };
   }, []);
 
-  // Load cloud metadata when VPS is selected
+  // Load cloud metadata eagerly on create
   useEffect(() => {
-    if (mode !== "create" || provider !== "vps" || cloudsLoaded) return;
+    if (mode !== "create" || cloudsLoaded) return;
     fetch("/api/clouds")
       .then((r) => r.json())
       .then((data) => {
@@ -72,28 +71,11 @@ export default function TenantForm({ initial, mode }: Props) {
         setCloudsLoaded(true);
       })
       .catch(() => setCloudsLoaded(true));
-  }, [mode, provider, cloudsLoaded]);
+  }, [mode, cloudsLoaded]);
 
   const selectedCloud = clouds.find((c) => c.id === cloud);
 
-  function startPolling(tenantSlug: string) {
-    setProvision({ phase: "provisioning", slug: tenantSlug, steps: [] });
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/tenants/${tenantSlug}/health`);
-        const data = await res.json();
-        if (data.data?.status === "running") {
-          clearInterval(pollRef.current!);
-          setProvision({ phase: "ready", slug: tenantSlug });
-        }
-      } catch {
-        // keep polling
-      }
-    }, 2000);
-  }
-
-  async function handleVpsCreate() {
+  async function handleCreate() {
     setLoading(true);
     setError("");
     setProvision({ phase: "provisioning", slug, steps: [] });
@@ -103,7 +85,6 @@ export default function TenantForm({ initial, mode }: Props) {
         slug,
         displayName,
         email,
-        provider: "vps" as const,
         cloud,
         region,
         machineType,
@@ -167,7 +148,7 @@ export default function TenantForm({ initial, mode }: Props) {
         const tenant = data.data;
         if (!tenant) return;
 
-        if (tenant.container_status === "running") {
+        if (tenant.status === "running") {
           clearInterval(pollRef.current!);
           setProvision({ phase: "ready", slug: tenantSlug });
         }
@@ -184,25 +165,21 @@ export default function TenantForm({ initial, mode }: Props) {
     setSaved(false);
     setEnvWarning(false);
 
-    // VPS creation uses SSE flow
-    if (mode === "create" && provider === "vps") {
-      await handleVpsCreate();
+    if (mode === "create") {
+      await handleCreate();
       return;
     }
 
     const hasOverrides = Object.keys(envOverrides).length > 0;
 
     const body = {
-      ...(mode === "create" ? { slug, email } : {}),
       displayName,
       ...(hasOverrides ? { envOverrides } : {}),
     };
 
     try {
-      const url = mode === "create" ? "/api/tenants" : `/api/tenants/${slug}`;
-      const method = mode === "create" ? "POST" : "PATCH";
-      const res = await fetch(url, {
-        method,
+      const res = await fetch(`/api/tenants/${slug}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -210,11 +187,6 @@ export default function TenantForm({ initial, mode }: Props) {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || "Request failed");
-      }
-
-      if (mode === "create" && data.data) {
-        startPolling(data.data.slug);
-        return;
       }
 
       setSaved(true);
@@ -234,12 +206,8 @@ export default function TenantForm({ initial, mode }: Props) {
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 border-2 border-brand border-t-transparent rounded-full animate-spin" />
             <div>
-              <p className="text-zinc-200 font-medium">
-                {provider === "vps" ? "Provisioning VPS" : "Provisioning instance"}
-              </p>
-              <p className="text-sm text-zinc-500 mt-0.5">
-                {provider === "vps" ? "This usually takes 2-5 minutes" : "This usually takes 10-20 seconds"}
-              </p>
+              <p className="text-zinc-200 font-medium">Provisioning VPS</p>
+              <p className="text-sm text-zinc-500 mt-0.5">This usually takes 2-5 minutes</p>
             </div>
           </div>
           {provision.steps.length > 0 && (
@@ -319,35 +287,6 @@ export default function TenantForm({ initial, mode }: Props) {
 
       {mode === "create" && (
         <>
-          {/* Provider selector */}
-          <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-2">Provider</label>
-            <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setProvider("docker")}
-                className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                  provider === "docker"
-                    ? "bg-brand/15 text-brand-light border-r border-brand/30"
-                    : "bg-zinc-900 text-zinc-400 border-r border-zinc-800 hover:text-zinc-200"
-                }`}
-              >
-                Docker Container
-              </button>
-              <button
-                type="button"
-                onClick={() => setProvider("vps")}
-                className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                  provider === "vps"
-                    ? "bg-brand/15 text-brand-light"
-                    : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                Dedicated VPS
-              </button>
-            </div>
-          </div>
-
           <div>
             <label className="block text-sm font-medium text-zinc-300 mb-1.5">Slug (subdomain)</label>
             <input
@@ -374,76 +313,74 @@ export default function TenantForm({ initial, mode }: Props) {
             />
           </div>
 
-          {/* VPS-specific fields */}
-          {provider === "vps" && (
-            <div className="space-y-4 p-4 bg-zinc-950/50 border border-zinc-800/40 rounded-lg">
-              <p className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">VPS Configuration</p>
+          {/* VPS Configuration */}
+          <div className="space-y-4 p-4 bg-zinc-950/50 border border-zinc-800/40 rounded-lg">
+            <p className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">VPS Configuration</p>
 
-              {clouds.length === 0 && cloudsLoaded && (
-                <p className="text-sm text-amber-400">No cloud providers configured. Set GCP_PROJECT, HETZNER_API_TOKEN, or AWS_ACCESS_KEY_ID.</p>
-              )}
+            {clouds.length === 0 && cloudsLoaded && (
+              <p className="text-sm text-amber-400">No cloud providers configured. Set GCP_PROJECT, HETZNER_API_TOKEN, or AWS_ACCESS_KEY_ID.</p>
+            )}
 
-              {clouds.length > 0 && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-1.5">Cloud Provider</label>
-                    <select
-                      value={cloud}
-                      onChange={(e) => {
-                        setCloud(e.target.value);
-                        const c = clouds.find((cl) => cl.id === e.target.value);
-                        if (c?.regions.length) setRegion(c.regions[0].id);
-                        if (c?.machineTypes.length) setMachineType(c.machineTypes[0].id);
-                      }}
-                      className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50"
-                    >
-                      {clouds.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  </div>
+            {clouds.length > 0 && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1.5">Cloud Provider</label>
+                  <select
+                    value={cloud}
+                    onChange={(e) => {
+                      setCloud(e.target.value);
+                      const c = clouds.find((cl) => cl.id === e.target.value);
+                      if (c?.regions.length) setRegion(c.regions[0].id);
+                      if (c?.machineTypes.length) setMachineType(c.machineTypes[0].id);
+                    }}
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50"
+                  >
+                    {clouds.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-1.5">Region</label>
-                    <select
-                      value={region}
-                      onChange={(e) => setRegion(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50"
-                    >
-                      {selectedCloud?.regions.map((r) => (
-                        <option key={r.id} value={r.id}>{r.description} ({r.id})</option>
-                      ))}
-                    </select>
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1.5">Region</label>
+                  <select
+                    value={region}
+                    onChange={(e) => setRegion(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50"
+                  >
+                    {selectedCloud?.regions.map((r) => (
+                      <option key={r.id} value={r.id}>{r.description} ({r.id})</option>
+                    ))}
+                  </select>
+                </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-1.5">Machine Type</label>
-                    <select
-                      value={machineType}
-                      onChange={(e) => setMachineType(e.target.value)}
-                      className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50"
-                    >
-                      {selectedCloud?.machineTypes.map((m) => (
-                        <option key={m.id} value={m.id}>{m.description}</option>
-                      ))}
-                    </select>
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1.5">Machine Type</label>
+                  <select
+                    value={machineType}
+                    onChange={(e) => setMachineType(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50"
+                  >
+                    {selectedCloud?.machineTypes.map((m) => (
+                      <option key={m.id} value={m.id}>{m.description}</option>
+                    ))}
+                  </select>
+                </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-1.5">Git Tag</label>
-                    <input
-                      type="text"
-                      value={gitTag}
-                      onChange={(e) => setGitTag(e.target.value)}
-                      placeholder="latest"
-                      className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors font-mono text-sm"
-                    />
-                    <p className="text-xs text-zinc-500 mt-1.5">OpenClaw version to deploy. Leave empty for latest.</p>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1.5">Git Tag</label>
+                  <input
+                    type="text"
+                    value={gitTag}
+                    onChange={(e) => setGitTag(e.target.value)}
+                    placeholder="latest"
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors font-mono text-sm"
+                  />
+                  <p className="text-xs text-zinc-500 mt-1.5">OpenClaw version to deploy. Leave empty for latest.</p>
+                </div>
+              </>
+            )}
+          </div>
         </>
       )}
 
@@ -467,7 +404,7 @@ export default function TenantForm({ initial, mode }: Props) {
 
       <button
         type="submit"
-        disabled={loading || (mode === "create" && provider === "vps" && clouds.length === 0)}
+        disabled={loading || (mode === "create" && clouds.length === 0)}
         className="w-full py-2.5 px-4 bg-brand hover:bg-brand-light disabled:opacity-50 text-white font-medium rounded-lg transition-colors"
       >
         {loading ? "Working..." : mode === "create" ? "Create Tenant" : "Save Changes"}

@@ -11,14 +11,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
 
-    const provider = await getProvider(tenant);
+    const provider = await getProvider();
     const status = await provider.getStatus(tenant);
     const health = status === "running" ? await provider.getHealth(tenant) : "unknown";
 
     await supabaseAdmin
       .from("tenants")
       .update({
-        container_status: status,
+        status,
         last_health_check: new Date().toISOString(),
         last_health_status: health,
       })

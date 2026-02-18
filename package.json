@@ -20,7 +20,6 @@
     "@supabase/supabase-js": "^2.49.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "dockerode": "^4.0.4",
     "dotenv": "^17.3.1",
     "next": "^15.1.0",
     "node-pg-migrate": "^7.9.1",
@@ -33,7 +32,6 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
     "@tailwindcss/postcss": "^4.0.0",
-    "@types/dockerode": "^3.3.34",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.11",
     "@types/react": "^19.0.0",

@@ -21,8 +21,8 @@ export default async function DashboardPage() {
 
   const stats = {
     total: list.length,
-    running: list.filter((t) => t.container_status === "running").length,
-    stopped: list.filter((t) => t.container_status === "stopped").length,
+    running: list.filter((t) => t.status === "running").length,
+    stopped: list.filter((t) => t.status === "stopped").length,
     healthy: list.filter((t) => t.last_health_status === "healthy").length,
     unhealthy: list.filter((t) => t.last_health_status === "unhealthy").length,
   };

@@ -5,13 +5,10 @@ export interface Tenant {
   display_name: string;
   email: string | null;
   enabled: boolean;
-  container_id: string | null;
-  container_status: string;
+  status: string;
   access_app_id: string | null;
-  image: string | null;
   env_overrides: Record<string, string> | null;
   gateway_token: string;
-  provider: string;
   last_health_check: string | null;
   last_health_status: string | null;
   created_at: string;
@@ -50,4 +47,4 @@ export interface AuditLog {
   created_at: string;
 }
 
-export type TenantWithVps = Tenant & { vps_instances: VpsInstance | null };
+export type TenantWithVps = Tenant & { vps_instances: VpsInstance };

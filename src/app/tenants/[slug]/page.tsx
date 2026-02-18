@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
-import { BASE_DOMAIN, FLEET_TLS, OPENCLAW_IMAGE, CLOUD_NAMES } from "@/lib/constants";
+import { BASE_DOMAIN, FLEET_TLS, CLOUD_NAMES } from "@/lib/constants";
 import NavShell from "@/components/NavShell";
 import StatusBadge from "@/components/StatusBadge";
 import TenantForm from "@/components/TenantForm";
@@ -27,6 +27,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
   const openUrl = `${instanceUrl}/?token=${tenant.gateway_token}`;
 
   const vps = tenant.vps_instances;
+  const cloudLabel = vps?.cloud ? (CLOUD_NAMES[vps.cloud] || vps.cloud) : "VPS";
 
   return (
     <NavShell isAdmin={admin}>
@@ -44,16 +45,18 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
               <h1 className="text-2xl font-bold tracking-tight">{tenant.display_name}</h1>
               <div className="flex items-center gap-2 mt-0.5">
                 <p className="text-zinc-500 text-sm font-mono">{tenant.slug}</p>
-                <ProviderBadge provider={tenant.provider} cloud={vps?.cloud} />
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-violet-500/10 text-violet-400 text-[10px] font-medium rounded border border-violet-500/20">
+                  {cloudLabel}
+                </span>
               </div>
             </div>
-            <StatusBadge status={tenant.container_status} />
+            <StatusBadge status={tenant.status} />
           </div>
         </div>
 
         {/* Status strip */}
-        <div className={`grid gap-3 ${vps ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2"}`}>
-          <InfoCard label={tenant.provider === "docker" ? "Container" : "VM"} value={tenant.container_status} />
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+          <InfoCard label="VM" value={tenant.status} />
           <InfoCard label="Health" value={tenant.last_health_status || "unknown"} />
           {vps && (
             <>
@@ -141,11 +144,8 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
         {/* Lifecycle controls */}
         <TenantActions
           slug={tenant.slug}
-          status={tenant.container_status}
+          status={tenant.status}
           isAdmin={admin}
-          currentImage={tenant.image}
-          defaultImage={OPENCLAW_IMAGE}
-          provider={tenant.provider}
           currentGitTag={vps?.git_tag}
         />
 
@@ -172,22 +172,5 @@ function InfoCard({ label, value }: { label: string; value: string }) {
       <p className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">{label}</p>
       <p className="text-sm font-medium mt-1 truncate text-zinc-200">{value}</p>
     </div>
-  );
-}
-
-function ProviderBadge({ provider, cloud }: { provider: string; cloud?: string | null }) {
-  if (provider === "docker") {
-    return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-500/10 text-blue-400 text-[10px] font-medium rounded border border-blue-500/20">
-        Docker
-      </span>
-    );
-  }
-
-  const cloudLabel = cloud ? (CLOUD_NAMES[cloud] || cloud) : "VPS";
-  return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-violet-500/10 text-violet-400 text-[10px] font-medium rounded border border-violet-500/20">
-      {cloudLabel}
-    </span>
   );
 }

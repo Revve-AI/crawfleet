@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireFleetAdmin } from "@/lib/auth";
 import { requireTenantAccess } from "@/lib/tenant-access";
-import { tryRemoveByName } from "@/lib/docker";
 import { deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { getProvider } from "@/lib/providers";
 import { TenantUpdateInput } from "@/types";
@@ -96,18 +95,12 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
       .single();
     if (!tenant) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const provider = await getProvider(tenant);
+    const provider = await getProvider();
 
-    // Provider-specific cleanup (VM + tunnel for VPS, container for Docker)
     await provider.removeTenantData(tenant);
     await provider.remove(tenant);
 
-    // For Docker, also clean up by name as fallback
-    if (tenant.provider === "docker") {
-      await tryRemoveByName(`fleet-${slug}`);
-    }
-
-    // Delete Cloudflare Access app (shared across all providers)
+    // Delete Cloudflare Access app
     if (tenant.access_app_id) {
       try {
         await deleteTenantAccessApp(tenant.access_app_id);

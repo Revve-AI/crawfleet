@@ -17,8 +17,13 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# Placeholders inlined into client JS at build time; replaced with real values in entrypoint.sh
+ENV NEXT_PUBLIC_SUPABASE_URL=__NEXT_PUBLIC_SUPABASE_URL__
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=__NEXT_PUBLIC_SUPABASE_ANON_KEY__
+
 RUN pnpm build
-RUN pnpm exec esbuild server.ts --bundle --platform=node --target=node22 --outfile=custom-server.js --external:next --external:@supabase/supabase-js --external:@supabase/ssr --external:dockerode --external:@google-cloud/storage --external:ssh2 --external:@google-cloud/compute --external:pg
+RUN pnpm exec esbuild server.ts --bundle --platform=node --target=node22 --outfile=custom-server.js --external:next --external:@supabase/supabase-js --external:@supabase/ssr --external:@google-cloud/storage --external:ssh2 --external:@google-cloud/compute --external:pg
 
 FROM base AS runner
 WORKDIR /app

@@ -8,24 +8,17 @@ export default function TenantActions({
   slug,
   status,
   isAdmin,
-  currentImage,
-  defaultImage,
-  provider,
   currentGitTag,
 }: {
   slug: string;
   status: string;
   isAdmin: boolean;
-  currentImage: string | null;
-  defaultImage: string;
-  provider: string;
   currentGitTag?: string | null;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState("");
   const [actionStatus, setActionStatus] = useState("");
   const [showDeploy, setShowDeploy] = useState(false);
-  const [image, setImage] = useState(currentImage || "");
   const [gitTag, setGitTag] = useState(currentGitTag || "");
 
   async function streamAction(
@@ -75,16 +68,9 @@ export default function TenantActions({
 
   async function handleDeploy() {
     const body: Record<string, unknown> = {};
-    if (provider === "docker") {
-      const trimmed = image.trim();
-      if (trimmed && trimmed !== currentImage) {
-        body.image = trimmed;
-      }
-    } else {
-      const trimmed = gitTag.trim();
-      if (trimmed) {
-        body.gitTag = trimmed;
-      }
+    const trimmed = gitTag.trim();
+    if (trimmed) {
+      body.gitTag = trimmed;
     }
     const ok = await streamAction("deploy", `/api/tenants/${slug}/deploy`, {
       headers: { "Content-Type": "application/json" },
@@ -105,10 +91,7 @@ export default function TenantActions({
   }
 
   async function handleDelete() {
-    const msg = provider === "vps"
-      ? `Delete tenant "${slug}"? This destroys the VM, tunnel, and all data.`
-      : `Delete tenant "${slug}"? This removes the container and all data.`;
-    if (!confirm(msg)) return;
+    if (!confirm(`Delete tenant "${slug}"? This destroys the VM, tunnel, and all data.`)) return;
     setLoading("delete");
     await fetch(`/api/tenants/${slug}`, { method: "DELETE" });
     router.push("/tenants");
@@ -186,39 +169,21 @@ export default function TenantActions({
 
       {showDeploy && (
         <div className="border-t border-zinc-800/60 pt-3 space-y-3">
-          {provider === "docker" ? (
-            <div>
-              <label className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium block mb-1.5">
-                Docker Image
-              </label>
-              <input
-                type="text"
-                value={image}
-                onChange={(e) => setImage(e.target.value)}
-                placeholder={defaultImage}
-                className="w-full px-3 py-2 text-sm font-mono bg-zinc-950 border border-zinc-700/60 rounded-lg text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-brand/50"
-              />
-              <p className="text-[11px] text-zinc-600 mt-1">
-                Leave empty to use default: {defaultImage}
-              </p>
-            </div>
-          ) : (
-            <div>
-              <label className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium block mb-1.5">
-                Git Tag
-              </label>
-              <input
-                type="text"
-                value={gitTag}
-                onChange={(e) => setGitTag(e.target.value)}
-                placeholder="latest"
-                className="w-full px-3 py-2 text-sm font-mono bg-zinc-950 border border-zinc-700/60 rounded-lg text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-brand/50"
-              />
-              <p className="text-[11px] text-zinc-600 mt-1">
-                OpenClaw version to deploy. Leave empty for latest.
-              </p>
-            </div>
-          )}
+          <div>
+            <label className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium block mb-1.5">
+              Git Tag
+            </label>
+            <input
+              type="text"
+              value={gitTag}
+              onChange={(e) => setGitTag(e.target.value)}
+              placeholder="latest"
+              className="w-full px-3 py-2 text-sm font-mono bg-zinc-950 border border-zinc-700/60 rounded-lg text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-brand/50"
+            />
+            <p className="text-[11px] text-zinc-600 mt-1">
+              OpenClaw version to deploy. Leave empty for latest.
+            </p>
+          </div>
 
           <div className="flex gap-2">
             <button

@@ -3,7 +3,6 @@ import { parse } from "url";
 import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
 import { createClient } from "@supabase/supabase-js";
-import { docker } from "./src/lib/docker";
 import { getProvider } from "./src/lib/providers";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -125,34 +124,17 @@ app.prepare().then(() => {
         return;
       }
 
-      // For Docker tenants, verify container is running
-      if (tenant.provider === "docker") {
-        if (!tenant.container_id) {
-          console.error(`[shell] Container not found for tenant: ${slug}`);
-          ws.send(JSON.stringify({ type: "error", message: "Container not found" }));
-          ws.close();
-          return;
-        }
-        const containerInfo = await docker.getContainer(tenant.container_id).inspect();
-        if (!containerInfo.State.Running) {
-          console.error(`[shell] Container not running for tenant: ${slug} (state: ${containerInfo.State.Status})`);
-          ws.send(JSON.stringify({ type: "error", message: "Container not running" }));
-          ws.close();
-          return;
-        }
-      }
-
-      // For VPS tenants, verify VM is accessible
-      if (tenant.provider === "vps" && !tenant.vps_instances?.tunnel_id) {
+      // Verify VM is accessible
+      if (!tenant.vps_instances?.tunnel_id) {
         console.error(`[shell] VPS not ready for tenant: ${slug}`);
         ws.send(JSON.stringify({ type: "error", message: "VPS not ready" }));
         ws.close();
         return;
       }
 
-      console.log(`[shell] Starting shell for tenant: ${slug} (provider: ${tenant.provider})`);
+      console.log(`[shell] Starting shell for tenant: ${slug}`);
 
-      const provider = await getProvider(tenant);
+      const provider = await getProvider();
       const shell = await provider.execShell(tenant);
       console.log(`[shell] Shell started successfully for tenant: ${slug}`);
 

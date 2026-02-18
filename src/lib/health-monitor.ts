@@ -7,19 +7,16 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 export async function checkAllHealth(): Promise<void> {
   const { data: tenants } = await supabaseAdmin
     .from("tenants")
-    .select("*, vps_instances(*)")
-    .or("container_id.not.is.null,provider.eq.vps");
+    .select("*, vps_instances(*)");
 
   if (!tenants) return;
 
   for (const tenant of tenants as TenantWithVps[]) {
-    // Skip Docker tenants without containers
-    if (tenant.provider === "docker" && !tenant.container_id) continue;
-    // Skip VPS tenants without instances
-    if (tenant.provider === "vps" && !tenant.vps_instances) continue;
+    // Skip tenants without VPS instances
+    if (!tenant.vps_instances) continue;
 
     try {
-      const provider = await getProvider(tenant);
+      const provider = await getProvider();
       const status = await provider.getStatus(tenant);
       const health = status === "running"
         ? await provider.getHealth(tenant)
@@ -28,7 +25,7 @@ export async function checkAllHealth(): Promise<void> {
       await supabaseAdmin
         .from("tenants")
         .update({
-          container_status: status,
+          status,
           last_health_check: new Date().toISOString(),
           last_health_status: health,
         })

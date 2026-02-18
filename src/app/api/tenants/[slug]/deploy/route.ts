@@ -22,19 +22,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     const body = await req.json().catch(() => ({}));
     const dbData: Record<string, unknown> = {};
 
-    if (tenant.provider === "docker") {
-      if (!tenant.container_id) throw new Error("No container");
-      if (body.image && typeof body.image === "string") {
-        dbData.image = body.image.trim();
-      }
-    } else {
-      if (body.gitTag && typeof body.gitTag === "string" && tenant.vps_instances) {
-        await supabaseAdmin
-          .from("vps_instances")
-          .update({ git_tag: body.gitTag.trim() })
-          .eq("id", tenant.vps_instances.id);
-        tenant.vps_instances.git_tag = body.gitTag.trim();
-      }
+    if (body.gitTag && typeof body.gitTag === "string" && tenant.vps_instances) {
+      await supabaseAdmin
+        .from("vps_instances")
+        .update({ git_tag: body.gitTag.trim() })
+        .eq("id", tenant.vps_instances.id);
+      tenant.vps_instances.git_tag = body.gitTag.trim();
     }
 
     if (body.envOverrides && typeof body.envOverrides === "object") {
@@ -64,34 +57,25 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     send("status", { step: "Starting deploy" });
 
-    const provider = await getProvider(updated);
-    const newId = await provider.deploy(updated, (step) => {
+    const provider = await getProvider();
+    await provider.deploy(updated, (step) => {
       send("status", { step });
     });
 
-    if (tenant.provider === "docker") {
-      await supabaseAdmin
-        .from("tenants")
-        .update({ container_id: newId, container_status: "running" })
-        .eq("slug", slug);
-    } else {
-      await supabaseAdmin
-        .from("tenants")
-        .update({ container_status: "running" })
-        .eq("slug", slug);
-    }
+    await supabaseAdmin
+      .from("tenants")
+      .update({ status: "running" })
+      .eq("slug", slug);
 
     await supabaseAdmin.from("audit_logs").insert({
       tenant_id: tenant.id,
       action: "tenant.deployed",
       details: {
-        provider: tenant.provider,
-        ...(dbData.image ? { image: dbData.image } : {}),
         ...(body.gitTag ? { gitTag: body.gitTag } : {}),
         ...(body.envOverrides ? { envOverrides: Object.keys(body.envOverrides) } : {}),
       },
     });
 
-    send("done", { containerId: newId });
+    send("done", { slug });
   });
 }
