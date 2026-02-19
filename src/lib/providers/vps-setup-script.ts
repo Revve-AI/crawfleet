@@ -52,38 +52,36 @@ apt-get install -y -qq unattended-upgrades > /dev/null
 # Installs Node.js, git, build tools, and OpenClaw globally via npm
 curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install.sh | bash -s -- --no-prompt --no-onboard
 
-# Find where openclaw was installed
-OPENCLAW_BIN=\$(which openclaw 2>/dev/null || echo "/usr/local/bin/openclaw")
+# ─── Enable user lingering (so user services start at boot without login) ───
+loginctl enable-linger openclaw
 
-# ─── Environment file ───
-cat > /etc/openclaw.env << 'ENVEOF'
+# ─── Environment file (read by gateway service via drop-in) ───
+mkdir -p /home/openclaw/.openclaw
+cat > /home/openclaw/.openclaw/fleet.env << 'ENVEOF'
 OPENCLAW_GATEWAY_TOKEN=${opts.gatewayToken}
 HOME=/home/openclaw
 TERM=xterm-256color
 NODE_OPTIONS=--max-old-space-size=1024
 ${envLines}
 ENVEOF
-chmod 600 /etc/openclaw.env
+chmod 600 /home/openclaw/.openclaw/fleet.env
+chown openclaw:openclaw /home/openclaw/.openclaw/fleet.env
 
-# ─── Systemd service ───
-cat > /etc/systemd/system/openclaw.service << SVCEOF
-[Unit]
-Description=OpenClaw Gateway
-After=network.target
+# ─── Install OpenClaw's native gateway service + fleet env drop-in ───
+su - openclaw -c 'openclaw gateway install --token ${opts.gatewayToken}'
 
+# Add drop-in: inject fleet env vars + allow-unconfigured (no openclaw.json on fresh installs)
+OPENCLAW_BIN=\$(which openclaw 2>/dev/null || echo "/usr/local/bin/openclaw")
+mkdir -p /home/openclaw/.config/systemd/user/openclaw-gateway.service.d
+cat > /home/openclaw/.config/systemd/user/openclaw-gateway.service.d/fleet.conf << DROPEOF
 [Service]
-Type=simple
-User=openclaw
-EnvironmentFile=/etc/openclaw.env
-ExecStart=\${OPENCLAW_BIN} gateway --allow-unconfigured
-Restart=on-failure
-RestartSec=5
+EnvironmentFile=/home/openclaw/.openclaw/fleet.env
+ExecStart=
+ExecStart=\${OPENCLAW_BIN} gateway --port 18789 --allow-unconfigured
+DROPEOF
+chown -R openclaw:openclaw /home/openclaw/.config/systemd/user/openclaw-gateway.service.d
 
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-systemctl daemon-reload
-systemctl enable openclaw
+su - openclaw -c 'systemctl --user daemon-reload'
 
 echo "=== Setup complete ==="
 `;
@@ -121,10 +119,15 @@ set -euo pipefail
 
 echo "=== Deploying OpenClaw ==="
 
-# Re-run installer to upgrade
-curl -fsSL https://openclaw.ai/install.sh | bash
+# Re-run installer to upgrade (needs sudo for global npm install)
+sudo bash -c 'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-prompt --no-onboard'
 
-systemctl restart openclaw
+# Reinstall native service (picks up new binary version)
+export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+systemctl --user stop openclaw-gateway 2>/dev/null || true
+openclaw gateway install --force
+systemctl --user daemon-reload
+systemctl --user start openclaw-gateway
 
 echo "=== Deploy complete ==="
 `;
@@ -154,13 +157,14 @@ export function generateWriteConfigScript(envVars: Record<string, string>, gatew
   return `#!/bin/bash
 set -euo pipefail
 
-cat > /etc/openclaw.env << 'ENVEOF'
+cat > /home/openclaw/.openclaw/fleet.env << 'ENVEOF'
 OPENCLAW_GATEWAY_TOKEN=${gatewayToken}
 HOME=/home/openclaw
 TERM=xterm-256color
 NODE_OPTIONS=--max-old-space-size=1024
 ${envLines}
 ENVEOF
-chmod 600 /etc/openclaw.env
+chmod 600 /home/openclaw/.openclaw/fleet.env
+chown openclaw:openclaw /home/openclaw/.openclaw/fleet.env
 `;
 }

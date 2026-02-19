@@ -33,6 +33,10 @@ function escapeForBash(script: string): string {
   return "'" + script.replace(/'/g, "'\"'\"'") + "'";
 }
 
+/** Prefix for systemctl --user commands (ensure XDG_RUNTIME_DIR is set for SSH sessions) */
+const SYSTEMCTL_USER = "export XDG_RUNTIME_DIR=/run/user/$(id -u) && systemctl --user";
+const SVC = "openclaw-gateway";
+
 export class VpsProvider implements TenantProvider {
   async create(tenant: TenantWithVps, onStatus?: StatusCallback): Promise<string> {
     const vps = tenant.vps_instances;
@@ -119,9 +123,9 @@ export class VpsProvider implements TenantProvider {
         throw new Error(`cloudflared install failed (exit ${cfResult.code}):\nSTDOUT: ${cfResult.stdout.slice(-2000)}\nSTDERR: ${cfResult.stderr.slice(-2000)}`);
       }
 
-      // 6. Start OpenClaw
+      // 6. Start OpenClaw (native user-level service)
       onStatus?.("Starting OpenClaw");
-      await execSSH(conn, "sudo systemctl start openclaw", 30_000);
+      await execSSH(conn, `${SYSTEMCTL_USER} start ${SVC}`, 30_000);
       conn.end();
 
       // 7. Wait for health (OpenClaw takes ~3 min to start on small VMs)
@@ -223,7 +227,7 @@ export class VpsProvider implements TenantProvider {
     const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user, 6);
     try {
       onStatus?.("Starting OpenClaw service");
-      await execSSH(tunnel.conn, "sudo systemctl start openclaw", 30_000);
+      await execSSH(tunnel.conn, `${SYSTEMCTL_USER} start ${SVC}`, 30_000);
     } finally {
       tunnel.close();
     }
@@ -242,7 +246,7 @@ export class VpsProvider implements TenantProvider {
     if (vps.tunnel_id) {
       try {
         const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
-        await execSSH(tunnel.conn, "sudo systemctl stop openclaw", 30_000);
+        await execSSH(tunnel.conn, `${SYSTEMCTL_USER} stop ${SVC}`, 30_000);
         tunnel.close();
       } catch {
         // VM may be unreachable
@@ -261,7 +265,7 @@ export class VpsProvider implements TenantProvider {
 
     const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
     try {
-      await execSSH(tunnel.conn, "sudo systemctl restart openclaw", 30_000);
+      await execSSH(tunnel.conn, `${SYSTEMCTL_USER} restart ${SVC}`, 30_000);
     } finally {
       tunnel.close();
     }
@@ -297,22 +301,22 @@ export class VpsProvider implements TenantProvider {
     const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
 
     try {
-      // Update env vars
+      // Update env vars (writes to user home, no sudo needed)
       onStatus?.("Updating configuration");
       const envVars = await resolveAllEnv(tenant);
       const configScript = generateWriteConfigScript(envVars, tenant.gateway_token);
       await execSSH(
         tunnel.conn,
-        `sudo bash -c ${escapeForBash(configScript)}`,
+        `bash -c ${escapeForBash(configScript)}`,
         30_000,
       );
 
-      // Deploy new version
+      // Deploy new version (installer needs sudo for global npm, service commands run as user)
       onStatus?.("Deploying new version");
       const deployScript = generateDeployScript(gitTag);
       const result = await execSSH(
         tunnel.conn,
-        `sudo bash -c ${escapeForBash(deployScript)}`,
+        `bash -c ${escapeForBash(deployScript)}`,
         300_000,
       );
 
@@ -385,7 +389,7 @@ export class VpsProvider implements TenantProvider {
     // Uses ssh2 Client.exec() — remote command over SSH, not local shell
     return new Promise((resolve, reject) => {
       tunnel.conn.exec(
-        `sudo journalctl -u openclaw -f -n ${Number(tail)} --no-pager`,
+        `journalctl --user -u ${SVC} -f -n ${Number(tail)} --no-pager`,
         (err, stream) => {
           if (err) {
             tunnel.close();
@@ -425,7 +429,7 @@ export class VpsProvider implements TenantProvider {
 
     try {
       const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
-      await execSSH(tunnel.conn, "sudo rm -rf /opt/openclaw /etc/openclaw.env", 30_000);
+      await execSSH(tunnel.conn, "rm -rf ~/.openclaw /opt/openclaw", 30_000);
       tunnel.close();
     } catch {
       // VM may be unreachable
