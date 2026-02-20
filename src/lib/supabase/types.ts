@@ -30,6 +30,7 @@ export interface VpsInstance {
   ssh_user: string;
   ssh_port: number;
   vm_status: string;
+  provision_stage: string | null;
   created_at: string;
   updated_at: string;
 }

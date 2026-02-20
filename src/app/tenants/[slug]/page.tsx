@@ -54,6 +54,24 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
           </div>
         </div>
 
+        {/* Provisioning failed banner */}
+        {tenant.status === "provisioning_failed" && vps && (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 flex items-start gap-3">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <div>
+              <p className="text-amber-400 font-medium text-sm">Provisioning incomplete</p>
+              <p className="text-zinc-400 text-sm mt-0.5">
+                VM is set up but provisioning stopped at stage: <span className="font-mono text-amber-300">{vps.provision_stage || "unknown"}</span>.
+                Use the Resume Provisioning button below to continue.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Status strip */}
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
           <InfoCard label="VM" value={tenant.status} />

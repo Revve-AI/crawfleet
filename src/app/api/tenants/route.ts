@@ -4,6 +4,7 @@ import { getAuthEmail, isFleetAdmin, requireFleetAdmin } from "@/lib/auth";
 import { generateToken } from "@/lib/crypto";
 import { createTenantAccessApp, deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { getProvider } from "@/lib/providers";
+import { PartialProvisioningError } from "@/lib/providers/types";
 import { connectSSHThroughTunnel, execSSH, escapeForBash } from "@/lib/providers/ssh";
 import { generateAddUserSshKeyScript } from "@/lib/providers/vps-setup-script";
 import { TenantCreateInput } from "@/types";
@@ -142,7 +143,32 @@ export async function POST(req: NextRequest) {
 
       send("done", { slug: tenant.slug });
     } catch (err) {
-      // Rollback: delete tenant record (cascade deletes VpsInstance)
+      if (err instanceof PartialProvisioningError) {
+        // VM is set up — preserve tenant, VPS record, and access app
+        await supabaseAdmin
+          .from("tenants")
+          .update({ status: "provisioning_failed" })
+          .eq("id", tenant.id);
+        await supabaseAdmin.from("audit_logs").insert({
+          tenant_id: tenant.id,
+          action: "tenant.provisioning_failed",
+          details: {
+            slug: body.slug,
+            completedStage: err.completedStage,
+            failedStep: err.failedStep,
+            error: err.cause.message,
+          },
+        });
+        send("partial_failure", {
+          slug: tenant.slug,
+          completedStage: err.completedStage,
+          failedStep: err.failedStep,
+          error: err.cause.message,
+        });
+        return;
+      }
+
+      // Full failure — rollback tenant record (cascade deletes VpsInstance)
       if (accessAppId) {
         await deleteTenantAccessApp(accessAppId).catch(() => {});
       }

@@ -12,8 +12,9 @@ export async function checkAllHealth(): Promise<void> {
   if (!tenants) return;
 
   for (const tenant of tenants as TenantWithVps[]) {
-    // Skip tenants without VPS instances
+    // Skip tenants without VPS instances or with incomplete provisioning
     if (!tenant.vps_instances) continue;
+    if (tenant.status === "provisioning_failed") continue;
 
     try {
       const provider = await getProvider();

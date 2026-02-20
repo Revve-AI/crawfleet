@@ -25,7 +25,8 @@ interface Props {
 type ProvisionState =
   | { phase: "form" }
   | { phase: "provisioning"; slug: string; steps: string[] }
-  | { phase: "ready"; slug: string };
+  | { phase: "ready"; slug: string }
+  | { phase: "partial_failure"; slug: string; steps: string[]; completedStage: string; failedStep: string; error: string };
 
 export default function TenantForm({ initial, mode }: Props) {
   const router = useRouter();
@@ -102,6 +103,7 @@ export default function TenantForm({ initial, mode }: Props) {
 
       let completed = false;
       let failed = false;
+      let partialFailure = false;
       await readSSE(res, ({ event, data }) => {
         if (event === "status") {
           setProvision((prev) =>
@@ -113,13 +115,23 @@ export default function TenantForm({ initial, mode }: Props) {
           setError(data.error as string);
           setProvision({ phase: "form" });
           failed = true;
+        } else if (event === "partial_failure") {
+          partialFailure = true;
+          setProvision((prev) => ({
+            phase: "partial_failure",
+            slug: (data.slug as string) || slug,
+            steps: prev.phase === "provisioning" ? prev.steps : [],
+            completedStage: data.completedStage as string,
+            failedStep: data.failedStep as string,
+            error: data.error as string,
+          }));
         } else if (event === "done") {
           completed = true;
           setProvision({ phase: "ready", slug: (data.slug as string) || slug });
         }
       });
 
-      if (failed) return;
+      if (failed || partialFailure) return;
       // Stream ended cleanly without done/error — server may still be working
       if (!completed) {
         pollForCompletion(slug);
@@ -153,6 +165,17 @@ export default function TenantForm({ initial, mode }: Props) {
         if (tenant.status === "running") {
           clearInterval(pollRef.current!);
           setProvision({ phase: "ready", slug: tenantSlug });
+        } else if (tenant.status === "provisioning_failed") {
+          clearInterval(pollRef.current!);
+          const vps = tenant.vps_instances;
+          setProvision({
+            phase: "partial_failure",
+            slug: tenantSlug,
+            steps: [],
+            completedStage: vps?.provision_stage || "unknown",
+            failedStep: "unknown",
+            error: "Provisioning failed — check tenant details for more info",
+          });
         }
       } catch {
         // keep polling
@@ -230,6 +253,51 @@ export default function TenantForm({ initial, mode }: Props) {
               ))}
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (provision.phase === "partial_failure") {
+    return (
+      <div className="max-w-lg">
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-8 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-amber-400 font-semibold">Provisioning partially failed</p>
+              <p className="text-sm text-zinc-400 mt-0.5">VM is set up but provisioning stopped at: <span className="font-mono text-amber-300">{provision.failedStep}</span></p>
+            </div>
+          </div>
+          <div className="bg-zinc-900/60 rounded-lg p-3 text-sm text-zinc-300 font-mono break-all">
+            {provision.error}
+          </div>
+          {provision.steps.length > 0 && (
+            <div className="space-y-1.5 pt-2 border-t border-amber-500/10">
+              {provision.steps.map((step, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  <span className="text-zinc-500">{step}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-3 pt-1">
+            <a
+              href={`/tenants/${provision.slug}`}
+              className="px-5 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-medium rounded-lg transition-colors text-sm border border-amber-500/30"
+            >
+              View Details & Resume
+            </a>
+          </div>
         </div>
       </div>
     );

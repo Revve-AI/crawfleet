@@ -4,6 +4,7 @@ const styles: Record<string, { bg: string; text: string; dot: string }> = {
   running: { bg: "bg-emerald-500/15 border-emerald-500/25", text: "text-emerald-400", dot: "bg-emerald-400" },
   stopped: { bg: "bg-zinc-500/15 border-zinc-500/25", text: "text-zinc-400", dot: "bg-zinc-500" },
   error: { bg: "bg-red-500/15 border-red-500/25", text: "text-red-400", dot: "bg-red-400" },
+  provisioning_failed: { bg: "bg-amber-500/15 border-amber-500/25", text: "text-amber-400", dot: "bg-amber-400" },
   healthy: { bg: "bg-emerald-500/15 border-emerald-500/25", text: "text-emerald-400", dot: "bg-emerald-400" },
   unhealthy: { bg: "bg-amber-500/15 border-amber-500/25", text: "text-amber-400", dot: "bg-amber-400" },
   unknown: { bg: "bg-zinc-500/15 border-zinc-500/25", text: "text-zinc-500", dot: "bg-zinc-500" },

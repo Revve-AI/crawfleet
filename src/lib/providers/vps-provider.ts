@@ -23,7 +23,8 @@ import {
   FLEET_TLS,
   OPENCLAW_DEFAULT_GIT_TAG,
 } from "../constants";
-import type { TenantProvider, TenantWithVps, ShellHandle, StatusCallback } from "./types";
+import type { TenantProvider, TenantWithVps, ShellHandle, StatusCallback, ProvisionStage } from "./types";
+import { PartialProvisioningError } from "./types";
 
 // Note: This file uses ssh2's Client.exec() method for remote command execution
 // over SSH, NOT child_process.exec(). There is no local shell injection risk.
@@ -33,6 +34,13 @@ const SYSTEMCTL_USER = "export XDG_RUNTIME_DIR=/run/user/$(id -u) && systemctl -
 const SVC = "openclaw-gateway";
 
 export class VpsProvider implements TenantProvider {
+  private async setProvisionStage(vpsId: string, stage: ProvisionStage): Promise<void> {
+    await supabaseAdmin
+      .from("vps_instances")
+      .update({ provision_stage: stage })
+      .eq("id", vpsId);
+  }
+
   async create(tenant: TenantWithVps, onStatus?: StatusCallback): Promise<string> {
     const vps = tenant.vps_instances;
     if (!vps) throw new Error("No VPS instance config");
@@ -55,6 +63,7 @@ export class VpsProvider implements TenantProvider {
         .from("vps_instances")
         .update({ instance_id: instanceId, vm_status: "creating" })
         .eq("id", vps.id);
+      await this.setProvisionStage(vps.id, "vm_created");
 
       // 2. Wait for VM to be SSH-accessible
       onStatus?.("Waiting for VM to boot");
@@ -64,6 +73,7 @@ export class VpsProvider implements TenantProvider {
         .from("vps_instances")
         .update({ external_ip: ip })
         .eq("id", vps.id);
+      await this.setProvisionStage(vps.id, "vm_ready");
 
       // 3. SSH in, run hardening + setup
       // GCP injects the SSH key for user "openclaw", so connect as that user
@@ -93,80 +103,170 @@ export class VpsProvider implements TenantProvider {
       if (setupResult.code !== 0) {
         throw new Error(`Setup script failed (exit ${setupResult.code}):\nSTDOUT: ${setupResult.stdout.slice(-2000)}\nSTDERR: ${setupResult.stderr.slice(-2000)}`);
       }
-
-      // 4. Create Cloudflare Tunnel
-      onStatus?.("Creating Cloudflare Tunnel");
-      const { tunnelId, tunnelToken } = await createTunnel(tenant.slug);
-      await configureTunnelIngress(tunnelId, tenant.slug, CLOUDFLARE_DOMAIN);
-      await createTunnelDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
-      await createTunnelSSHDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
-
-      await supabaseAdmin
-        .from("vps_instances")
-        .update({ tunnel_id: tunnelId, tunnel_token: tunnelToken })
-        .eq("id", vps.id);
-
-      // 5. Install cloudflared on VM
-      onStatus?.("Installing tunnel connector");
-      const cfScript = generateInstallCloudflaredScript(tunnelToken);
-      const cfResult = await execSSH(
-        conn,
-        `sudo bash -c ${escapeForBash(cfScript)}`,
-        300_000,
-      );
-      if (cfResult.code !== 0) {
-        throw new Error(`cloudflared install failed (exit ${cfResult.code}):\nSTDOUT: ${cfResult.stdout.slice(-2000)}\nSTDERR: ${cfResult.stderr.slice(-2000)}`);
-      }
-
-      // 6. Start OpenClaw (native user-level service)
-      onStatus?.("Starting OpenClaw");
-      await execSSH(conn, `${SYSTEMCTL_USER} start ${SVC}`, 30_000);
       conn.end();
+      await this.setProvisionStage(vps.id, "vm_setup");
 
-      // 7. Wait for health (OpenClaw takes ~3 min to start on small VMs)
-      onStatus?.("Waiting for health check");
-      const healthy = await this.waitForHealthy(tenant, 300_000, onStatus);
-
-      if (!healthy) {
-        // Service didn't come up — leave SSH open for debugging, don't lock down
-        console.error(`[vps] Health check failed for ${tenant.slug} — skipping firewall lockdown`);
-        await supabaseAdmin
-          .from("vps_instances")
-          .update({ vm_status: "error" })
-          .eq("id", vps.id);
-        onStatus?.("VM created but OpenClaw failed to start — SSH left open for debugging");
-        return instanceId;
-      }
-
-      // 8. Update status
-      await supabaseAdmin
-        .from("vps_instances")
-        .update({ vm_status: "running" })
-        .eq("id", vps.id);
-
-      // 9. Lock down firewall — close ports 22 and 53 (last direct SSH)
-      onStatus?.("Locking down firewall");
-      const lockdownConn = await connectWithRetry({ host: ip, username: "openclaw" });
-      const lockdownScript = generateLockdownScript();
-      const lockdownResult = await execSSH(
-        lockdownConn,
-        `sudo bash -c ${escapeForBash(lockdownScript)}`,
-        30_000,
-      );
-      lockdownConn.end();
-      if (lockdownResult.code !== 0) {
-        console.warn(`[vps] Firewall lockdown warning for ${tenant.slug}: ${lockdownResult.stderr}`);
-      }
+      // --- NO-ROLLBACK BOUNDARY ---
+      // VM is set up and valuable from this point. Failures preserve the VM
+      // and set provisioning_failed status so the user can resume.
+      await this.runPostSetupStages(tenant, vps.id, ip, onStatus);
 
       return instanceId;
     } catch (err) {
+      // Partial failures: VM is valuable, don't rollback
+      if (err instanceof PartialProvisioningError) {
+        console.error(`[vps] Partial provisioning failure for ${tenant.slug}:`, err.message);
+        await supabaseAdmin
+          .from("vps_instances")
+          .update({ vm_status: "provisioning_failed" })
+          .eq("id", vps.id);
+        throw err;
+      }
+
       console.error(`[vps] Creation failed for ${tenant.slug}:`, err);
-      // Rollback on failure
+      // Full rollback — VM has no value yet (pre-setup)
       await this.rollbackCreate(tenant, instanceId, vps.region, vps.cloud).catch((e) =>
         console.error("[vps] Rollback error:", e),
       );
       throw err;
     }
+  }
+
+  /**
+   * Runs provisioning stages after VM setup (tunnel, cloudflared, service, health, lockdown).
+   * On failure, throws PartialProvisioningError with the last completed stage.
+   */
+  private async runPostSetupStages(
+    tenant: TenantWithVps,
+    vpsId: string,
+    ip: string,
+    onStatus?: StatusCallback,
+    startAfter?: ProvisionStage,
+  ): Promise<void> {
+    const postSetupStages: ProvisionStage[] = [
+      "tunnel_created",
+      "cloudflared_installed",
+      "service_started",
+      "health_checked",
+      "locked_down",
+    ];
+    const startIdx = startAfter
+      ? postSetupStages.indexOf(startAfter) + 1
+      : 0;
+    let lastCompleted: ProvisionStage = startAfter || "vm_setup";
+
+    // Re-read VPS data for tunnel info (may have been updated in a previous partial run)
+    const { data: freshVps } = await supabaseAdmin
+      .from("vps_instances")
+      .select("*")
+      .eq("id", vpsId)
+      .single();
+    if (!freshVps) throw new Error("VPS instance not found");
+
+    let tunnelId = freshVps.tunnel_id;
+    let tunnelToken = freshVps.tunnel_token;
+
+    for (let i = startIdx; i < postSetupStages.length; i++) {
+      const stage = postSetupStages[i];
+      try {
+        switch (stage) {
+          case "tunnel_created": {
+            onStatus?.("Creating Cloudflare Tunnel");
+            const tunnel = await createTunnel(tenant.slug);
+            tunnelId = tunnel.tunnelId;
+            tunnelToken = tunnel.tunnelToken;
+            await configureTunnelIngress(tunnelId, tenant.slug, CLOUDFLARE_DOMAIN);
+            await createTunnelDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
+            await createTunnelSSHDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
+            await supabaseAdmin
+              .from("vps_instances")
+              .update({ tunnel_id: tunnelId, tunnel_token: tunnelToken })
+              .eq("id", vpsId);
+            break;
+          }
+          case "cloudflared_installed": {
+            if (!tunnelToken) throw new Error("No tunnel token — tunnel_created stage must run first");
+            onStatus?.("Installing tunnel connector");
+            const cfConn = await connectWithRetry({ host: ip, username: "openclaw" });
+            const cfScript = generateInstallCloudflaredScript(tunnelToken);
+            const cfResult = await execSSH(
+              cfConn,
+              `sudo bash -c ${escapeForBash(cfScript)}`,
+              300_000,
+            );
+            cfConn.end();
+            if (cfResult.code !== 0) {
+              throw new Error(`cloudflared install failed (exit ${cfResult.code}):\nSTDOUT: ${cfResult.stdout.slice(-2000)}\nSTDERR: ${cfResult.stderr.slice(-2000)}`);
+            }
+            break;
+          }
+          case "service_started": {
+            onStatus?.("Starting OpenClaw");
+            const svcConn = await connectWithRetry({ host: ip, username: "openclaw" });
+            await execSSH(svcConn, `${SYSTEMCTL_USER} start ${SVC}`, 30_000);
+            svcConn.end();
+            break;
+          }
+          case "health_checked": {
+            onStatus?.("Waiting for health check");
+            const healthy = await this.waitForHealthy(tenant, 300_000, onStatus);
+            if (!healthy) {
+              throw new Error("Health check timed out — OpenClaw failed to start");
+            }
+            break;
+          }
+          case "locked_down": {
+            onStatus?.("Locking down firewall");
+            const lockConn = await connectWithRetry({ host: ip, username: "openclaw" });
+            const lockdownScript = generateLockdownScript();
+            const lockdownResult = await execSSH(
+              lockConn,
+              `sudo bash -c ${escapeForBash(lockdownScript)}`,
+              30_000,
+            );
+            lockConn.end();
+            if (lockdownResult.code !== 0) {
+              console.warn(`[vps] Firewall lockdown warning for ${tenant.slug}: ${lockdownResult.stderr}`);
+            }
+            break;
+          }
+        }
+        lastCompleted = stage;
+        await this.setProvisionStage(vpsId, stage);
+      } catch (err) {
+        await this.setProvisionStage(vpsId, lastCompleted);
+        throw new PartialProvisioningError(
+          lastCompleted,
+          stage,
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
+    }
+
+    // All stages done — mark as running
+    await supabaseAdmin
+      .from("vps_instances")
+      .update({ vm_status: "running" })
+      .eq("id", vpsId);
+  }
+
+  async resume(tenant: TenantWithVps, onStatus?: StatusCallback): Promise<void> {
+    const vps = tenant.vps_instances;
+    if (!vps) throw new Error("No VPS instance config");
+    if (vps.vm_status !== "provisioning_failed") {
+      throw new Error("Tenant is not in provisioning_failed state");
+    }
+    if (!vps.provision_stage) {
+      throw new Error("No provision_stage recorded — cannot resume");
+    }
+    if (!vps.external_ip) {
+      throw new Error("No external IP recorded — cannot resume");
+    }
+
+    const lastStage = vps.provision_stage as ProvisionStage;
+
+    onStatus?.(`Resuming from stage: ${lastStage}`);
+    await this.runPostSetupStages(tenant, vps.id, vps.external_ip, onStatus, lastStage);
   }
 
   private async rollbackCreate(
@@ -178,9 +278,21 @@ export class VpsProvider implements TenantProvider {
     console.log(`[vps] Rolling back creation of ${tenant.slug}`);
     const vps = tenant.vps_instances;
 
-    // Delete tunnel if created
-    if (vps?.tunnel_id) {
-      await deleteTunnel(vps.tunnel_id).catch(() => {});
+    // Re-read tunnel_id from DB — the in-memory vps object is stale
+    // (tunnel is created and saved to DB during create(), after the original object was passed in)
+    let tunnelId = vps?.tunnel_id;
+    if (!tunnelId && vps) {
+      const { data } = await supabaseAdmin
+        .from("vps_instances")
+        .select("tunnel_id")
+        .eq("id", vps.id)
+        .single();
+      tunnelId = data?.tunnel_id ?? null;
+    }
+
+    // Delete tunnel + its DNS records if created
+    if (tunnelId) {
+      await deleteTunnel(tunnelId).catch(() => {});
     }
 
     // Delete VM

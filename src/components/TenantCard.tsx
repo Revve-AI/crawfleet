@@ -17,6 +17,7 @@ const accentMap: Record<string, string> = {
   running: "group-hover:border-l-emerald-500",
   stopped: "group-hover:border-l-zinc-600",
   error: "group-hover:border-l-red-500",
+  provisioning_failed: "group-hover:border-l-amber-500",
 };
 
 export default function TenantCard({ tenant }: { tenant: Tenant }) {

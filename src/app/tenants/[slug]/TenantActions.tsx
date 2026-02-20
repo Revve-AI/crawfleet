@@ -38,6 +38,9 @@ export default function TenantActions({
         } else if (event === "error") {
           setActionStatus(`Failed: ${data.error}`);
           failed = true;
+        } else if (event === "partial_failure") {
+          setActionStatus(`Failed: ${data.error}`);
+          failed = true;
         } else if (event === "done") {
           completed = true;
           setActionStatus("Complete");
@@ -64,6 +67,10 @@ export default function TenantActions({
 
   async function handleStart() {
     await streamAction("start", `/api/tenants/${slug}/start`);
+  }
+
+  async function handleResume() {
+    await streamAction("resume", `/api/tenants/${slug}/resume`);
   }
 
   async function handleDeploy() {
@@ -98,12 +105,22 @@ export default function TenantActions({
     router.refresh();
   }
 
-  const isStreaming = loading === "start" || loading === "deploy";
+  const isStreaming = loading === "start" || loading === "deploy" || loading === "resume";
 
   return (
     <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium mr-2">Controls</span>
+
+        {status === "provisioning_failed" && isAdmin && (
+          <button
+            onClick={handleResume}
+            disabled={!!loading}
+            className="px-3.5 py-2 text-sm bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-lg hover:bg-amber-500/20 transition-colors disabled:opacity-50 font-medium"
+          >
+            {loading === "resume" ? "Resuming..." : "Resume Provisioning"}
+          </button>
+        )}
 
         {status === "running" ? (
           <button
