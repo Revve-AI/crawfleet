@@ -1,6 +1,6 @@
 services:
   dashboard:
-    image: asia-southeast1-docker.pkg.dev/keen-frame-487200-c3/openclaw-fleet/dashboard:latest
+    image: ${DEPLOY_REGISTRY}/dashboard:latest
     env_file: .env
     extra_hosts:
       - "metadata.google.internal:169.254.169.254"
