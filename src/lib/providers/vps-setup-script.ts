@@ -52,6 +52,12 @@ apt-get install -y -qq unattended-upgrades > /dev/null
 # Installs Node.js, git, build tools, and OpenClaw globally via npm
 curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install.sh | bash -s -- --no-prompt --no-onboard
 
+# ─── Install Homebrew (as openclaw user) ───
+su - openclaw -c 'NONINTERACTIVE=1 /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+# Add brew to openclaw's PATH
+echo 'eval "\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/openclaw/.bashrc
+chown openclaw:openclaw /home/openclaw/.bashrc
+
 # ─── Enable user lingering (so user services start at boot without login) ───
 loginctl enable-linger openclaw
 
@@ -66,6 +72,8 @@ done
 
 # ─── Environment file (read by gateway service via drop-in) ───
 mkdir -p /home/openclaw/.openclaw
+chown openclaw:openclaw /home/openclaw/.openclaw
+chmod 700 /home/openclaw/.openclaw
 cat > /home/openclaw/.openclaw/fleet.env << 'ENVEOF'
 OPENCLAW_GATEWAY_TOKEN=${opts.gatewayToken}
 HOME=/home/openclaw
