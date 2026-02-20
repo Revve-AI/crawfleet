@@ -47,6 +47,7 @@ export default function TenantForm({ initial, mode }: Props) {
   const [region, setRegion] = useState("");
   const [machineType, setMachineType] = useState("");
   const [gitTag, setGitTag] = useState("");
+  const [sshPublicKey, setSshPublicKey] = useState("");
   const [cloudsLoaded, setCloudsLoaded] = useState(false);
 
   useEffect(() => {
@@ -89,6 +90,7 @@ export default function TenantForm({ initial, mode }: Props) {
         region,
         machineType,
         gitTag: gitTag || undefined,
+        sshPublicKey: sshPublicKey.trim() || undefined,
         ...(Object.keys(envOverrides).length > 0 ? { envOverrides } : {}),
       };
 
@@ -258,6 +260,12 @@ export default function TenantForm({ initial, mode }: Props) {
               Open Shell
             </a>
             <a
+              href={`/tenants/${provision.slug}/ssh`}
+              className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-lg transition-colors text-sm border border-zinc-700/60"
+            >
+              SSH Setup
+            </a>
+            <a
               href={`/tenants/${provision.slug}`}
               className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-lg transition-colors text-sm border border-zinc-700/60"
             >
@@ -380,6 +388,19 @@ export default function TenantForm({ initial, mode }: Props) {
                 </div>
               </>
             )}
+          </div>
+
+          {/* SSH Public Key */}
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">SSH Public Key <span className="text-zinc-500 font-normal">(optional)</span></label>
+            <textarea
+              value={sshPublicKey}
+              onChange={(e) => setSshPublicKey(e.target.value)}
+              placeholder="ssh-ed25519 AAAA... you@example.com"
+              rows={3}
+              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors font-mono text-xs resize-none"
+            />
+            <p className="text-xs text-zinc-500 mt-1.5">Enables SSH access to the VM via cloudflared. You can also add this later from the SSH tab.</p>
           </div>
         </>
       )}

@@ -9,6 +9,7 @@ export interface Tenant {
   access_app_id: string | null;
   env_overrides: Record<string, string> | null;
   gateway_token: string;
+  user_ssh_public_key: string | null;
   last_health_check: string | null;
   last_health_status: string | null;
   created_at: string;

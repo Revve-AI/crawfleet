@@ -4,6 +4,8 @@ import { getAuthEmail, isFleetAdmin, requireFleetAdmin } from "@/lib/auth";
 import { generateToken } from "@/lib/crypto";
 import { createTenantAccessApp, deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { getProvider } from "@/lib/providers";
+import { connectSSHThroughTunnel, execSSH, escapeForBash } from "@/lib/providers/ssh";
+import { generateAddUserSshKeyScript } from "@/lib/providers/vps-setup-script";
 import { TenantCreateInput } from "@/types";
 import { apiError } from "@/lib/api-error";
 import { sseResponse, type SSESend } from "@/lib/sse";
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest) {
         display_name: body.displayName,
         email: body.email,
         env_overrides: body.envOverrides || null,
+        user_ssh_public_key: body.sshPublicKey || null,
         gateway_token: generateToken(),
         access_app_id: accessAppId,
       })
@@ -104,6 +107,27 @@ export async function POST(req: NextRequest) {
         .from("tenants")
         .update({ status: "running" })
         .eq("slug", body.slug);
+
+      // Install user SSH key if provided
+      if (body.sshPublicKey) {
+        send("status", { step: "Installing SSH key" });
+        try {
+          const tunnel = await connectSSHThroughTunnel(body.slug, "openclaw");
+          try {
+            const script = generateAddUserSshKeyScript(body.sshPublicKey);
+            await execSSH(
+              tunnel.conn,
+              `sudo bash -c ${escapeForBash(script)}`,
+              30_000,
+            );
+          } finally {
+            tunnel.close();
+          }
+        } catch (err) {
+          // Non-fatal — user can add key later from the SSH tab
+          console.warn(`[tenant] Failed to install SSH key for ${body.slug}:`, err);
+        }
+      }
 
       await supabaseAdmin.from("audit_logs").insert({
         tenant_id: tenant.id,

@@ -7,6 +7,7 @@ export interface TenantCreateInput {
   machineType: string;
   region: string;
   gitTag?: string;
+  sshPublicKey?: string;
 }
 
 export interface TenantUpdateInput {

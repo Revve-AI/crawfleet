@@ -138,6 +138,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
             >
               Logs
             </a>
+            <a
+              href={`/tenants/${tenant.slug}/ssh`}
+              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors border border-zinc-700/60"
+            >
+              SSH
+            </a>
           </div>
         </div>
 
