@@ -55,6 +55,15 @@ curl -fsSL --proto '=https' --tlsv1.2 https://openclaw.ai/install.sh | bash -s -
 # ─── Enable user lingering (so user services start at boot without login) ───
 loginctl enable-linger openclaw
 
+# Start the user manager immediately (lingering alone doesn't start it until next boot)
+OPENCLAW_UID=\$(id -u openclaw)
+systemctl start user@\${OPENCLAW_UID}.service
+# Wait for the user runtime directory to be created
+for i in \$(seq 1 15); do
+  [ -d /run/user/\${OPENCLAW_UID} ] && break
+  sleep 1
+done
+
 # ─── Environment file (read by gateway service via drop-in) ───
 mkdir -p /home/openclaw/.openclaw
 cat > /home/openclaw/.openclaw/fleet.env << 'ENVEOF'
@@ -68,7 +77,7 @@ chmod 600 /home/openclaw/.openclaw/fleet.env
 chown openclaw:openclaw /home/openclaw/.openclaw/fleet.env
 
 # ─── Install OpenClaw's native gateway service + fleet env drop-in ───
-su - openclaw -c 'openclaw gateway install --token ${opts.gatewayToken}'
+su - openclaw -c 'export XDG_RUNTIME_DIR=/run/user/\$(id -u) && openclaw gateway install --token ${opts.gatewayToken}'
 
 # Add drop-in: inject fleet env vars + allow-unconfigured (no openclaw.json on fresh installs)
 OPENCLAW_BIN=\$(which openclaw 2>/dev/null || echo "/usr/local/bin/openclaw")
@@ -81,7 +90,7 @@ ExecStart=\${OPENCLAW_BIN} gateway --port 18789 --allow-unconfigured
 DROPEOF
 chown -R openclaw:openclaw /home/openclaw/.config/systemd/user/openclaw-gateway.service.d
 
-su - openclaw -c 'systemctl --user daemon-reload'
+su - openclaw -c 'export XDG_RUNTIME_DIR=/run/user/\$(id -u) && systemctl --user daemon-reload'
 
 echo "=== Setup complete ==="
 `;
@@ -146,6 +155,45 @@ ufw deny 53
 ufw reload
 
 echo "=== Firewall locked down: zero open ports ==="
+`;
+}
+
+export function generateAddUserSshKeyScript(publicKey: string): string {
+  return `#!/bin/bash
+set -euo pipefail
+
+AUTHORIZED_KEYS="/home/openclaw/.ssh/authorized_keys"
+
+# Ensure .ssh dir exists
+mkdir -p /home/openclaw/.ssh
+touch "\${AUTHORIZED_KEYS}"
+
+# Remove any existing user key (lines after the fleet key)
+# The fleet key is always line 1; user keys are appended after a marker comment
+sed -i '/^# user-ssh-key$/,\$d' "\${AUTHORIZED_KEYS}"
+
+# Append user key
+echo '# user-ssh-key' >> "\${AUTHORIZED_KEYS}"
+echo '${publicKey}' >> "\${AUTHORIZED_KEYS}"
+
+chmod 700 /home/openclaw/.ssh
+chmod 600 "\${AUTHORIZED_KEYS}"
+chown -R openclaw:openclaw /home/openclaw/.ssh
+
+echo "=== User SSH key installed ==="
+`;
+}
+
+export function generateRemoveUserSshKeyScript(): string {
+  return `#!/bin/bash
+set -euo pipefail
+
+AUTHORIZED_KEYS="/home/openclaw/.ssh/authorized_keys"
+
+# Remove user key section
+sed -i '/^# user-ssh-key$/,\$d' "\${AUTHORIZED_KEYS}"
+
+echo "=== User SSH key removed ==="
 `;
 }
 

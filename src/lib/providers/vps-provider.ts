@@ -1,6 +1,6 @@
 import { Duplex } from "stream";
 import { getCloudProvider } from "../clouds";
-import { connectWithRetry, connectSSHThroughTunnel, execSSH, shellSSH } from "./ssh";
+import { connectWithRetry, connectSSHThroughTunnel, execSSH, shellSSH, escapeForBash } from "./ssh";
 import {
   generateSetupScript,
   generateInstallCloudflaredScript,
@@ -27,11 +27,6 @@ import type { TenantProvider, TenantWithVps, ShellHandle, StatusCallback } from 
 
 // Note: This file uses ssh2's Client.exec() method for remote command execution
 // over SSH, NOT child_process.exec(). There is no local shell injection risk.
-
-/** Escape a script so it can be passed as: sudo bash -c '<escaped>' */
-function escapeForBash(script: string): string {
-  return "'" + script.replace(/'/g, "'\"'\"'") + "'";
-}
 
 /** Prefix for systemctl --user commands (ensure XDG_RUNTIME_DIR is set for SSH sessions) */
 const SYSTEMCTL_USER = "export XDG_RUNTIME_DIR=/run/user/$(id -u) && systemctl --user";
@@ -117,7 +112,7 @@ export class VpsProvider implements TenantProvider {
       const cfResult = await execSSH(
         conn,
         `sudo bash -c ${escapeForBash(cfScript)}`,
-        120_000,
+        300_000,
       );
       if (cfResult.code !== 0) {
         throw new Error(`cloudflared install failed (exit ${cfResult.code}):\nSTDOUT: ${cfResult.stdout.slice(-2000)}\nSTDERR: ${cfResult.stderr.slice(-2000)}`);

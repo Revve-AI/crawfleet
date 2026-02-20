@@ -20,6 +20,11 @@ function getPrivateKey(): Buffer {
   return cachedKey;
 }
 
+/** Escape a script so it can be passed as: sudo bash -c '<escaped>' */
+export function escapeForBash(script: string): string {
+  return "'" + script.replace(/'/g, "'\"'\"'") + "'";
+}
+
 export function connectSSH(config: SSHConfig): Promise<SSHClient> {
   return new Promise((resolve, reject) => {
     const conn = new SSHClient();
