@@ -4,12 +4,6 @@ import { createMiddlewareClient } from "@/lib/supabase/middleware";
 const PUBLIC_PATHS = ["/login", "/auth/callback"];
 
 export async function middleware(request: NextRequest) {
-  if (process.env.NODE_ENV === "development") {
-    const headers = new Headers(request.headers);
-    headers.set("X-Auth-Email", "dev@revve.ai");
-    return NextResponse.next({ request: { headers } });
-  }
-
   const { pathname } = request.nextUrl;
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
