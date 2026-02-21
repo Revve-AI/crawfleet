@@ -1,6 +1,6 @@
 # Adding Cloud Providers
 
-Crawfleet only ships with GCP today, but the cloud layer is pluggable. If you can create a Linux VM with an API, you can wire it up.
+Crawfleet ships with GCP support, but the cloud layer is designed to be pluggable. Any cloud that can create a Linux VM via API can be integrated.
 
 ## The interface
 
@@ -19,16 +19,16 @@ interface CloudProvider {
 }
 ```
 
-That's it. Eight methods. The SSH setup, Cloudflare Tunnel creation, and OpenClaw installation are all handled by the `VpsProvider` layer above — your cloud just needs to make a VM and give Crawfleet an IP to SSH into.
+Eight methods. The SSH setup, Cloudflare Tunnel creation, and OpenClaw installation are handled by the `VpsProvider` layer above. Your cloud provider only needs to create a VM and return an IP address for SSH access.
 
-### Types you'll use
+### Types
 
 ```typescript
 interface VmSpec {
   name: string;           // "fleet-{slug}"
-  machineType: string;    // "e2-small", "cx21", whatever
+  machineType: string;    // "e2-small", "cx21", etc.
   region: string;         // "us-central1-a", "fsn1", etc.
-  sshPublicKey: string;   // Gets injected for the 'openclaw' user
+  sshPublicKey: string;   // Injected for the 'openclaw' user
   startupScript?: string;
   tags?: string[];
 }
@@ -40,33 +40,33 @@ interface VmInfo {
 }
 ```
 
-## Adding a provider: step by step
+## Step-by-step guide
 
 ### 1. Write the implementation
 
-Create `src/lib/clouds/hetzner.ts` (or wherever your cloud is):
+Create a new file in `src/lib/clouds/` (e.g., `hetzner.ts`):
 
 ```typescript
 import type { CloudProvider, VmSpec, VmInfo } from "./types";
 
 export class HetznerCloudProvider implements CloudProvider {
   async createVm(spec: VmSpec): Promise<string> {
-    // Hit the Hetzner API, create a server
-    // Make sure spec.sshPublicKey gets injected for user 'openclaw'
+    // Create a server via the Hetzner API
+    // Ensure spec.sshPublicKey is injected for user 'openclaw'
     // Return the server ID as a string
   }
 
   async waitForReady(instanceId: string, region: string, timeoutMs = 300_000): Promise<string> {
-    // Poll until it's running with an IP
-    // Return the external IP
+    // Poll until the server is running and has an IP
+    // Return the external IP address
   }
 
   async startVm(instanceId: string, region: string): Promise<void> { /* power on */ }
   async stopVm(instanceId: string, region: string): Promise<void> { /* power off */ }
-  async deleteVm(instanceId: string, region: string): Promise<void> { /* nuke it */ }
+  async deleteVm(instanceId: string, region: string): Promise<void> { /* delete server */ }
 
   async getVmInfo(instanceId: string, region: string): Promise<VmInfo> {
-    // Map your cloud's status to: running | stopped | creating | error | unknown
+    // Map the cloud provider's status to: running | stopped | creating | error | unknown
   }
 
   async listMachineTypes(): Promise<Array<{ id: string; description: string }>> {
@@ -86,14 +86,13 @@ export class HetznerCloudProvider implements CloudProvider {
 }
 ```
 
-### 2. Register it
+### 2. Register the provider
 
-In `src/lib/clouds/index.ts`, add your provider to the map. Providers are enabled by env var — if the var isn't set, the provider doesn't show up. Nice and clean.
+In `src/lib/clouds/index.ts`, add your provider to the map. Providers are enabled by environment variable — if the variable is not set, the provider is not available.
 
 ```typescript
 import { HetznerCloudProvider } from "./hetzner";
 
-// Hetzner: enabled when HETZNER_API_TOKEN is set
 if (process.env.HETZNER_API_TOKEN) {
   providers.hetzner = () => new HetznerCloudProvider();
 }
@@ -110,25 +109,25 @@ export const CLOUD_NAMES: Record<string, string> = {
 };
 ```
 
-### 4. Add the env var to `.env.example`
+### 4. Add the environment variable to `.env.example`
 
 ```bash
 HETZNER_API_TOKEN=""
 ```
 
-### 5. Try it
+### 5. Test
 
-1. Set your cloud's env var
-2. `pnpm dev`
-3. Go to "New Tenant" — your cloud shows up in the dropdown
-4. Create a test tenant and watch the SSE stream
+1. Set the environment variable for your cloud provider
+2. Run `pnpm dev`
+3. Navigate to "New Tenant" — the new cloud provider should appear in the dropdown
+4. Create a test tenant and verify the provisioning stream completes successfully
 
-## The contract
+## VM requirements
 
-Your provider just needs to hand off a VM with:
+Your provider must deliver a VM with:
 
 - **Debian 12** or Ubuntu 22.04+ (the setup script uses `apt`)
 - The fleet SSH key injected for user `openclaw`
-- An external IP so Crawfleet can SSH in during setup
+- An external IP address accessible via SSH
 
-Everything after that — OS hardening, OpenClaw install, Cloudflare Tunnel, firewall lockdown — is handled by `VpsProvider`. Your cloud code never touches any of that.
+Everything after VM creation — OS hardening, OpenClaw installation, Cloudflare Tunnel setup, and firewall configuration — is handled by `VpsProvider`. The cloud provider implementation does not need to manage any of that.

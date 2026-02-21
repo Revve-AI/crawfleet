@@ -1,8 +1,8 @@
 # API Reference
 
-All endpoints need a Supabase session cookie (browser) or access token. Endpoints marked **admin** require `app_metadata.role = "admin"`.
+All endpoints require a Supabase session cookie (browser) or access token. Endpoints marked **admin** require `app_metadata.role = "admin"`.
 
-Base: `https://fleet.yourdomain.com` (prod) / `http://localhost:3000` (dev)
+Base URL: `https://fleet.yourdomain.com` (production) or `http://localhost:3000` (development)
 
 ---
 
@@ -13,7 +13,7 @@ Base: `https://fleet.yourdomain.com` (prod) / `http://localhost:3000` (dev)
 GET /api/tenants
 ```
 
-Admins see everyone. Regular users see their own. That's RLS doing its thing.
+Returns all tenants for admins, or only the authenticated user's tenants for regular users.
 
 ```json
 {
@@ -44,9 +44,9 @@ Admins see everyone. Regular users see their own. That's RLS doing its thing.
 POST /api/tenants
 ```
 
-This one's special — it returns an **SSE stream** because provisioning a whole VM takes 2-5 minutes. Don't try to `await` this as JSON. You'll be waiting a while.
+Returns an **SSE stream** because VM provisioning takes 2-5 minutes.
 
-**Body:**
+**Request body:**
 ```json
 {
   "slug": "alice",
@@ -74,7 +74,7 @@ data: {"status":"Waiting for health check (30s, status: unknown)"}
 data: {"done":true,"tenant":{...}}
 ```
 
-If it blows up:
+**On failure:**
 ```
 data: {"error":"Setup script failed (exit 1): ..."}
 ```
@@ -84,7 +84,7 @@ data: {"error":"Setup script failed (exit 1): ..."}
 GET /api/tenants/{slug}
 ```
 
-Returns tenant details + VPS instance data.
+Returns tenant details including VPS instance data.
 
 ### Update tenant — **admin**
 ```
@@ -101,14 +101,14 @@ PATCH /api/tenants/{slug}
 }
 ```
 
-Heads up: `envOverrides` changes don't take effect until you redeploy. They're baked into the VM's env file.
+Note: `envOverrides` changes do not take effect until the tenant is redeployed. Environment variables are written to the VM's env file during deployment.
 
 ### Delete tenant — **admin**
 ```
 DELETE /api/tenants/{slug}
 ```
 
-Nukes everything: Cloudflare Tunnel, Access app, GCP VM. Gone.
+Deletes the Cloudflare Tunnel, Cloudflare Access app, and GCP VM. This action is irreversible.
 
 ---
 
@@ -119,30 +119,30 @@ Nukes everything: Cloudflare Tunnel, Access app, GCP VM. Gone.
 POST /api/tenants/{slug}/start
 ```
 
-Boots the VM if it's off, starts the OpenClaw service. SSE stream.
+Starts the VM if it is stopped and starts the OpenClaw service. Returns an SSE stream.
 
 ### Stop — **admin**
 ```
 POST /api/tenants/{slug}/stop
 ```
 
-Stops OpenClaw. VM stays up to keep the tunnel alive.
+Stops the OpenClaw service. The VM remains running to keep the tunnel connection alive.
 
 ### Restart — **admin**
 ```
 POST /api/tenants/{slug}/restart
 ```
 
-`systemctl restart openclaw` on the VM. Quick and dirty.
+Runs `systemctl restart openclaw` on the VM.
 
 ### Deploy — **admin**
 ```
 POST /api/tenants/{slug}/deploy
 ```
 
-Updates env vars and re-runs the OpenClaw installer. SSE stream.
+Updates environment variables and re-runs the OpenClaw installer. Returns an SSE stream.
 
-Optional body:
+**Optional request body:**
 ```json
 { "gitTag": "v1.2.3" }
 ```
@@ -152,7 +152,7 @@ Optional body:
 GET /api/tenants/{slug}/health
 ```
 
-Pings the tenant's OpenClaw through its Cloudflare Tunnel.
+Checks the tenant's OpenClaw instance through its Cloudflare Tunnel.
 
 ```json
 { "success": true, "data": { "status": "healthy" } }
@@ -163,22 +163,22 @@ Pings the tenant's OpenClaw through its Cloudflare Tunnel.
 GET /api/tenants/{slug}/logs
 ```
 
-SSE stream of `journalctl -u openclaw -f`. Keeps streaming until you disconnect.
+Returns an SSE stream of `journalctl -u openclaw -f` output. The stream continues until the client disconnects.
 
 ### Shell (WebSocket)
 ```
 WS /api/tenants/{slug}/shell?access_token=...
 ```
 
-Full interactive terminal. Connects through the Cloudflare Tunnel via SSH. Needs a Supabase access token as a query param.
+Opens an interactive terminal session. Connects to the VM through the Cloudflare Tunnel via SSH. Requires a Supabase access token as a query parameter.
 
-**Client → Server:**
+**Client -> Server:**
 ```json
 {"type": "input", "data": "ls\n"}
 {"type": "resize", "cols": 80, "rows": 24}
 ```
 
-**Server → Client:**
+**Server -> Client:**
 ```json
 {"type": "output", "data": "file1.txt\nfile2.txt\n"}
 {"type": "exit"}
@@ -212,7 +212,7 @@ GET /api/health
 GET /api/clouds
 ```
 
-Returns what's available for creating new tenants.
+Returns available cloud providers, regions, and machine types for tenant creation.
 
 ```json
 {
@@ -241,7 +241,7 @@ Returns what's available for creating new tenants.
 GET /api/settings
 ```
 
-Fleet-wide API keys and config.
+Returns fleet-wide API keys and configuration.
 
 ### Update settings — **admin**
 ```
@@ -268,17 +268,17 @@ Clears the Supabase session.
 
 ---
 
-## Errors
+## Error responses
 
-Every error looks like this:
+All errors follow this format:
 
 ```json
-{ "success": false, "error": "what went wrong" }
+{ "success": false, "error": "Description of what went wrong" }
 ```
 
 | Status | Meaning |
 |--------|---------|
-| 401 | Not logged in |
-| 403 | Logged in but not allowed (not admin, not your tenant) |
-| 404 | Tenant doesn't exist |
-| 500 | Something broke. Check server logs. |
+| 401 | Not authenticated |
+| 403 | Authenticated but not authorized (not an admin, or not the tenant owner) |
+| 404 | Tenant not found |
+| 500 | Internal server error |

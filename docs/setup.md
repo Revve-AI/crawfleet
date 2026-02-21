@@ -1,10 +1,10 @@
 # Setup Guide
 
-Three external services. Sounds like a lot, but each one does something you'd have to build yourself otherwise — so just roll with it.
+Crawfleet depends on three external services:
 
-- **Supabase** — database + auth (free tier is fine for dev)
-- **GCP** — where the tenant VMs live
-- **Cloudflare** — tunnels, DNS, per-user access control
+- **Supabase** — database and authentication
+- **GCP** — hosts tenant VMs
+- **Cloudflare** — tunnels, DNS, and per-user access control
 
 ## Prerequisites
 
@@ -12,35 +12,33 @@ Three external services. Sounds like a lot, but each one does something you'd ha
 - A Supabase project
 - A GCP project with Compute Engine enabled
 - A Cloudflare account with a domain
-- An SSH key pair (we'll generate one)
+- An SSH key pair (generated below)
 
 ## 1. Clone and install
 
 ```bash
-git clone https://github.com/your-org/crawfleet.git
+git clone https://github.com/Revve-AI/crawfleet.git
 cd crawfleet
 pnpm install
 ```
-
-Nothing exciting here. Moving on.
 
 ## 2. Supabase
 
 ### Create a project
 
-1. Head to [supabase.com](https://supabase.com), create a project
-2. Grab your **Project URL**, **anon key**, and **service role key** from Settings > API
-3. Grab the **Postgres connection string** from Settings > Database > Connection string (URI)
+1. Go to [supabase.com](https://supabase.com) and create a project
+2. Copy your **Project URL**, **anon key**, and **service role key** from Settings > API
+3. Copy the **Postgres connection string** from Settings > Database > Connection string (URI)
 
 ### Set up Google OAuth
 
 1. Go to Authentication > Providers > Google
-2. Enable it, plug in your Google OAuth client ID and secret
+2. Enable it and enter your Google OAuth client ID and secret
 3. Add redirect URLs:
-   - `http://localhost:3000/auth/callback` (dev)
-   - `https://fleet.yourdomain.com/auth/callback` (prod)
+   - `http://localhost:3000/auth/callback` (development)
+   - `https://fleet.yourdomain.com/auth/callback` (production)
 
-### Env vars
+### Environment variables
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL="https://xxxxx.supabase.co"
@@ -57,21 +55,21 @@ DATABASE_URL="postgresql://postgres:password@db.xxxxx.supabase.co:5432/postgres"
 gcloud services enable compute.googleapis.com
 ```
 
-### Auth — pick your fighter
+### Authentication
 
-**Local dev (easiest):**
+**Local development:**
 ```bash
 gcloud auth application-default login
 ```
 
-**Production (service account key):**
-1. Create a service account with `Compute Admin` role
+**Production (service account):**
+1. Create a service account with the `Compute Admin` role
 2. Download the JSON key
 3. Set `GCP_SERVICE_ACCOUNT_KEY` to the raw JSON, or `GCP_CREDENTIALS_FILE` to the file path
 
-**Running on GCP already?** Attach a service account to the VM and you're done. ADC just works.
+**Running on GCP:** Attach a service account to the VM directly. No key file needed.
 
-### Env vars
+### Environment variables
 
 ```bash
 GCP_PROJECT="your-gcp-project-id"
@@ -79,7 +77,7 @@ GCP_PROJECT="your-gcp-project-id"
 
 ### SSH key pair
 
-Crawfleet needs to SSH into tenant VMs during setup. Generate a key:
+Crawfleet uses SSH to connect to tenant VMs during provisioning. Generate a dedicated key pair:
 
 ```bash
 mkdir -p data/.ssh
@@ -95,29 +93,29 @@ VPS_SSH_PUBLIC_KEY="ssh-ed25519 AAAA... crawfleet"
 
 ### Domain and zone
 
-1. Add your domain to Cloudflare (or use one that's already there)
-2. Note the **Zone ID** from the domain overview
+1. Add your domain to Cloudflare (or use an existing one)
+2. Note the **Zone ID** from the domain overview page
 3. Note the **Account ID** from the sidebar
 
 ### API token
 
-Create one at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens). It needs:
+Create a token at [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) with these permissions:
 
 - **Account > Cloudflare Tunnel** — Edit
 - **Account > Access: Apps and Policies** — Edit
 - **Zone > DNS** — Edit
 
-Yes, it needs all three. Crawfleet creates tunnels, Access apps, and DNS records for every tenant. That's the whole point.
+All three are required. Crawfleet creates tunnels, Access apps, and DNS records for each tenant.
 
 ### Identity provider (optional)
 
-If you're on Google Workspace and want to force org-only logins:
+To restrict logins to a specific Google Workspace organization:
 
-1. Zero Trust > Settings > Authentication > Add new IdP
-2. Set up Google
+1. Go to Zero Trust > Settings > Authentication > Add new IdP
+2. Configure Google as the identity provider
 3. Note the **IdP ID**
 
-### Env vars
+### Environment variables
 
 ```bash
 CLOUDFLARE_ACCOUNT_ID="your-account-id"
@@ -130,13 +128,13 @@ BASE_DOMAIN="openclaw.yourdomain.com"
 
 ## 5. Admin emails
 
-Who gets the keys to the kingdom?
+Specify which users should have admin access:
 
 ```bash
 ADMIN_EMAILS="alice@company.com,bob@company.com"
 ```
 
-Leave it empty and the first person to log in becomes admin. Living dangerously.
+If left empty, the first user to log in is automatically promoted to admin.
 
 ## 6. Run migrations
 
@@ -144,20 +142,19 @@ Leave it empty and the first person to log in becomes admin. Living dangerously.
 pnpm db:migrate
 ```
 
-Creates four tables (`tenants`, `vps_instances`, `global_settings`, `audit_logs`) with RLS policies. Takes about two seconds.
+Creates four tables (`tenants`, `vps_instances`, `global_settings`, `audit_logs`) with RLS policies.
 
-## 7. Start it up
+## 7. Start the dev server
 
 ```bash
 pnpm dev
 ```
 
-Open `http://localhost:3000`. In dev mode:
-- Auth is bypassed — you're `dev@revve.ai`, congrats
+Open `http://localhost:3000`. You will need to log in via Google OAuth. In development mode:
 - Cloudflare Access app creation is skipped
-- WebSocket shell auth is skipped
+- WebSocket shell authentication is skipped
 
-You can browse the UI, but actually provisioning a VM requires GCP + Cloudflare to be configured for real.
+The dashboard UI is fully functional, but provisioning VMs requires valid GCP and Cloudflare configuration.
 
 ## Full `.env` reference
 
@@ -207,21 +204,21 @@ BACKUP_BUCKET=""
 BACKUP_INTERVAL_MIN="15"
 ```
 
-## When things go wrong
+## Troubleshooting
 
 **"Supabase not configured" on startup**
-`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` need to exist when the dev server starts. They're compile-time vars. No `.env`, no party.
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` must be set before starting the dev server. These are compile-time variables that Next.js inlines during build.
 
-**VM provisioning dies at the SSH step**
-- Does `VPS_SSH_PUBLIC_KEY` actually match the private key at `VPS_SSH_KEY_PATH`? Double check.
+**VM provisioning fails at the SSH step**
+- Verify that `VPS_SSH_PUBLIC_KEY` matches the private key at `VPS_SSH_KEY_PATH`.
 - GCP injects the key for user `openclaw`. Crawfleet connects as that user.
-- VMs need 30-60s after creation before SSH works. Patience.
+- New VMs typically need 30-60 seconds after creation before SSH is available.
 
-**Cloudflare tunnel won't connect**
-- Does your `CLOUDFLARE_API_KEY` have Tunnel Edit permissions? Go check.
-- Look at Zero Trust > Tunnels in the Cloudflare dashboard
+**Cloudflare Tunnel does not connect**
+- Confirm that your `CLOUDFLARE_API_KEY` has Tunnel Edit permissions.
+- Check the tunnel status in Zero Trust > Tunnels in the Cloudflare dashboard.
 - On the VM: `systemctl status cloudflared`
 
 **Google OAuth callback fails**
-- The callback URL in Supabase needs to match your dashboard URL exactly
-- Behind Cloudflare Tunnel, the callback reads `x-forwarded-proto` and `x-forwarded-host` headers. If those are wrong, the redirect URL is wrong
+- The callback URL configured in Supabase must match your dashboard URL exactly.
+- When running behind a Cloudflare Tunnel, the callback relies on `x-forwarded-proto` and `x-forwarded-host` headers. Incorrect values will produce a redirect URL mismatch.

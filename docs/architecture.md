@@ -1,174 +1,174 @@
 # Architecture
 
-The big idea: every tenant gets a real VM. Not a container. Not a namespace. A whole machine with its own firewall, its own tunnel, its own Cloudflare Access policy. Overkill? Maybe. But isolation is easy to reason about when it's a literal separate computer.
+Each tenant runs on a dedicated GCP VM with its own firewall, Cloudflare Tunnel, and Cloudflare Access policy. This provides strong isolation between tenants at the infrastructure level.
 
 ## Network topology
 
-Nothing is publicly accessible. Everything goes through Cloudflare. Every tenant VM has zero open ports after provisioning.
+No services are directly exposed to the internet. All traffic routes through Cloudflare.
 
 ```
 User browser
-    │
-    ▼
+    |
+    v
 Cloudflare Edge
-    │  ← Access policy: "is this alice@company.com? no? get out"
-    │
-    ▼
+    |  <- Access policy enforces per-tenant email authentication
+    |
+    v
 Cloudflare Tunnel (per tenant, outbound-only)
-    │
-    ▼
-cloudflared on VM → localhost:18789
-                     └── OpenClaw Gateway (never binds to 0.0.0.0)
+    |
+    v
+cloudflared on VM -> localhost:18789
+                     └── OpenClaw Gateway (binds to localhost only)
 ```
 
-The dashboard itself follows the same pattern:
+The dashboard follows the same pattern:
 
 ```
-Admin browser → Cloudflare Edge → Dashboard Tunnel → localhost:3000
+Admin browser -> Cloudflare Edge -> Dashboard Tunnel -> localhost:3000
 ```
 
-### Security invariants (don't break these)
+### Security invariants
 
-- Port 18789 is **never** opened in UFW. Ever.
-- OpenClaw gateway binds to `localhost` only. No `--bind lan`.
-- cloudflared connects *outbound* to Cloudflare. No inbound ports needed.
-- SSH is open only during initial setup, then UFW locks it down.
-- Each subdomain has a Cloudflare Access app scoped to exactly one email.
+- Port 18789 is **never** opened in the VM firewall.
+- The OpenClaw gateway binds to `localhost` only. No `--bind lan`.
+- `cloudflared` connects outbound to Cloudflare. No inbound ports are required.
+- SSH is the only externally accessible port during initial setup. After provisioning, the firewall locks it down.
+- Each tenant subdomain has a Cloudflare Access app scoped to exactly one email address.
 
-## What happens when you click "Create Tenant"
+## Provisioning flow
 
-The whole thing streams over SSE because it takes 2-5 minutes. Here's the play-by-play:
+Tenant creation streams progress over SSE because the process takes 2-5 minutes:
 
 ```
  1. Create a GCP VM (Debian 12, e2-small by default)
- 2. Wait for it to boot (~30-60s)
- 3. SSH in as 'openclaw' user
+ 2. Wait for the VM to boot (~30-60s)
+ 3. SSH in as the 'openclaw' user
  4. Run the setup script:
-    ├── Harden SSH (key-only, no root login)
-    ├── Set up UFW (deny all inbound except SSH — for now)
-    ├── Install fail2ban + unattended-upgrades
+    ├── Harden SSH (key-only auth, no root login)
+    ├── Configure UFW (deny all inbound except SSH temporarily)
+    ├── Install fail2ban and unattended-upgrades
     ├── Install OpenClaw via the official installer
     ├── Write API keys to /etc/openclaw.env
-    └── Create a systemd service for openclaw
+    └── Create a systemd service for OpenClaw
  5. Create a Cloudflare Tunnel (fleet-{slug})
- 6. Configure ingress: {slug}.domain → localhost:18789
+ 6. Configure ingress: {slug}.domain -> localhost:18789
  7. Create a CNAME DNS record pointing to the tunnel
  8. Install cloudflared on the VM with the tunnel token
  9. Start the OpenClaw systemd service
 10. Wait for health checks to pass (~1-3 min on small VMs)
-11. Lock down the firewall — close SSH and DNS. Zero open ports.
+11. Lock down the firewall — close SSH and DNS. Zero open ports remain.
 ```
 
-If anything fails, it rolls back: deletes the tunnel, destroys the VM, marks the instance as `error`. No half-provisioned zombies.
+If any step fails, the process rolls back: the tunnel is deleted, the VM is destroyed, and the instance is marked as `error`.
 
 ## Database
 
-Four tables in Supabase Postgres. All have RLS. All use `snake_case`.
+Four tables in Supabase Postgres, all with RLS enabled. All columns use `snake_case`.
 
 ### tenants
 
-The main table. One row per person.
+The primary table. One row per tenant.
 
-| Column | Type | What it is |
-|--------|------|------------|
-| id | uuid | PK |
+| Column | Type | Description |
+|--------|------|-------------|
+| id | uuid | Primary key |
 | user_id | uuid | Supabase auth user (nullable) |
-| slug | text | Unique subdomain — `alice` in `alice.openclaw.company.com` |
-| display_name | text | Human name |
-| email | text | Owner's email |
-| enabled | boolean | Kill switch |
+| slug | text | Unique subdomain identifier (e.g., `alice` in `alice.openclaw.company.com`) |
+| display_name | text | Display name |
+| email | text | Owner's email address |
+| enabled | boolean | Whether the tenant is active |
 | status | text | `running` or `stopped` |
 | access_app_id | text | Cloudflare Access app ID |
-| env_overrides | jsonb | Per-tenant API key overrides (native jsonb, no stringify dance) |
+| env_overrides | jsonb | Per-tenant API key overrides (native jsonb) |
 | gateway_token | text | OpenClaw gateway auth token |
-| last_health_check | timestamptz | When we last checked |
-| last_health_status | text | What we found |
+| last_health_check | timestamptz | Timestamp of last health check |
+| last_health_status | text | Result of last health check |
 
 ### vps_instances
 
-One-to-one with tenants. All the VM details.
+One-to-one relationship with tenants. Stores VM-specific details.
 
-| Column | Type | What it is |
-|--------|------|------------|
-| tenant_id | uuid | FK to tenants (unique) |
-| cloud | text | `gcp` (for now) |
-| region | text | e.g. `us-central1-a` |
-| instance_id | text | GCP instance name |
-| machine_type | text | e.g. `e2-small` |
-| external_ip | text | VM's public IP |
+| Column | Type | Description |
+|--------|------|-------------|
+| tenant_id | uuid | Foreign key to tenants (unique) |
+| cloud | text | Cloud provider identifier (e.g., `gcp`) |
+| region | text | e.g., `us-central1-a` |
+| instance_id | text | Cloud provider instance name |
+| machine_type | text | e.g., `e2-small` |
+| external_ip | text | VM public IP address |
 | tunnel_id | text | Cloudflare Tunnel ID |
-| tunnel_token | text | Tunnel auth token |
+| tunnel_token | text | Tunnel authentication token |
 | git_tag | text | OpenClaw version |
-| ssh_user | text | Always `openclaw` |
-| ssh_port | int | Always `22` |
+| ssh_user | text | SSH username (always `openclaw`) |
+| ssh_port | int | SSH port (always `22`) |
 | vm_status | text | `creating` / `running` / `stopped` / `error` / `destroying` |
 
 ### global_settings
 
-Key-value store. Fleet-wide API keys live here.
+Key-value store for fleet-wide configuration. API keys set here apply to all tenants unless overridden.
 
 ### audit_logs
 
-Who did what, when. `action` + `details` (jsonb) + `tenant_id` + timestamp.
+Records all administrative actions. Fields: `action`, `details` (jsonb), `tenant_id`, and timestamp.
 
 ## RLS policies
 
-- **Admins** — full CRUD on everything
-- **Regular users** — can read their own tenants (matched by `user_id` or `email`), plus associated VPS instances and audit logs
-- **Global settings** — admin-only, obviously
+- **Admins** have full CRUD access to all tables.
+- **Regular users** can read their own tenants (matched by `user_id` or `email`), along with associated VPS instances and audit logs.
+- **Global settings** are restricted to admin access only.
 
-Admin status comes from `app_metadata.role = 'admin'` in the Supabase JWT.
+Admin status is determined by `app_metadata.role = 'admin'` in the Supabase JWT.
 
-## Auth flow
-
-```
-/login → Google OAuth via Supabase → /auth/callback
-  → Exchange code for session
-  → If email in ADMIN_EMAILS → auto-promote to admin
-  → If nobody's logged in yet → first user gets admin (YOLO mode)
-  → Redirect to dashboard
-```
-
-Dev mode: middleware injects `X-Auth-Email: dev@revve.ai` and skips the whole song and dance.
-
-## Key resolution (the three-tier thing)
-
-When a tenant VM needs `ANTHROPIC_API_KEY`, Crawfleet resolves it with fallback:
+## Authentication flow
 
 ```
-1. tenant.env_overrides   →  per-tenant override (if set)
-2. global_settings table  →  fleet-wide default (Settings page)
-3. process.env            →  server env var (last resort)
+/login -> Google OAuth via Supabase -> /auth/callback
+  -> Exchange code for session
+  -> If email is in ADMIN_EMAILS -> auto-promote to admin
+  -> If no users exist yet -> first user becomes admin
+  -> Redirect to dashboard
 ```
 
-This lets you set keys once for everyone, then override for specific tenants. Env var changes require a redeploy — they get baked into `/etc/openclaw.env` on the VM.
+Authentication is required in all environments. In development, Cloudflare Access app creation and WebSocket shell authentication are skipped.
 
-## The custom server
+## Key resolution
 
-Next.js doesn't do WebSockets natively, so `server.ts` wraps it with a raw HTTP server:
+When a tenant VM needs an API key (e.g., `ANTHROPIC_API_KEY`), Crawfleet resolves it using a three-tier fallback:
+
+```
+1. tenant.env_overrides   ->  per-tenant override (if set)
+2. global_settings table  ->  fleet-wide default (configured in Settings)
+3. process.env            ->  server environment variable (fallback)
+```
+
+This allows setting keys once for all tenants while still supporting per-tenant overrides. Note that environment variable changes require a redeploy, as they are written to `/etc/openclaw.env` on the VM.
+
+## Custom server
+
+Next.js does not natively support WebSockets. `server.ts` wraps the Next.js handler with a raw HTTP server to support interactive shell access:
 
 ```
 server.ts
-├── HTTP → Next.js (normal pages and API routes)
+├── HTTP -> Next.js (pages and API routes)
 └── WebSocket upgrades on /api/tenants/{slug}/shell
-    ├── Auth via Supabase token in query string
-    ├── Ownership check (your tenant or you're admin)
-    ├── SSH through Cloudflare Tunnel to the VM
-    └── Bidirectional pipe: xterm.js ↔ WebSocket ↔ SSH
+    ├── Authentication via Supabase token in query string
+    ├── Ownership verification (tenant owner or admin)
+    ├── SSH connection through Cloudflare Tunnel to the VM
+    └── Bidirectional pipe: xterm.js <-> WebSocket <-> SSH
 ```
 
-Messages are JSON:
-- `{"type": "input", "data": "ls\n"}` — keystrokes from browser
-- `{"type": "output", "data": "..."}` — terminal output from VM
-- `{"type": "resize", "cols": 80, "rows": 24}` — window resize
-- `{"type": "exit"}` — shell ended
-- `{"type": "error", "message": "..."}` — something broke
+WebSocket message format:
+- `{"type": "input", "data": "ls\n"}` — keystrokes from the browser
+- `{"type": "output", "data": "..."}` — terminal output from the VM
+- `{"type": "resize", "cols": 80, "rows": 24}` — terminal resize
+- `{"type": "exit"}` — shell session ended
+- `{"type": "error", "message": "..."}` — error occurred
 
-30-second ping keepalive so Cloudflare doesn't kill idle connections.
+A 30-second ping interval prevents Cloudflare from closing idle connections.
 
 ## Cloud provider abstraction
 
-The `CloudProvider` interface (`src/lib/clouds/types.ts`) is how you'd add AWS or Hetzner:
+The `CloudProvider` interface (`src/lib/clouds/types.ts`) defines the contract for adding new cloud providers:
 
 ```typescript
 interface CloudProvider {
@@ -183,7 +183,7 @@ interface CloudProvider {
 }
 ```
 
-Only GCP exists today. See [adding-cloud-providers.md](adding-cloud-providers.md) if you want to change that.
+Currently only GCP is implemented. See [adding-cloud-providers.md](adding-cloud-providers.md) for instructions on adding new providers.
 
 ## Directory layout
 
@@ -206,21 +206,21 @@ Only GCP exists today. See [adding-cloud-providers.md](adding-cloud-providers.md
 │   │
 │   ├── lib/
 │   │   ├── constants.ts          # BASE_DOMAIN, DATA_DIR, etc.
-│   │   ├── auth.ts               # Who are you? Are you admin?
+│   │   ├── auth.ts               # Auth helpers
 │   │   ├── key-resolver.ts       # Three-tier env resolution
-│   │   ├── tenant-access.ts      # "Is this your tenant?" guard
+│   │   ├── tenant-access.ts      # Tenant ownership guard
 │   │   ├── sse.ts                # SSE streaming helpers
 │   │   ├── cloudflare-tunnel.ts  # Tunnel CRUD per tenant
 │   │   ├── cloudflare-access.ts  # Access app CRUD per tenant
 │   │   ├── supabase/             # DB clients and types
-│   │   ├── providers/            # VM lifecycle (the big one)
+│   │   ├── providers/            # VM lifecycle management
 │   │   └── clouds/               # Cloud abstraction (GCP impl)
 │   │
 │   ├── components/               # React UI
 │   └── types/                    # Shared TS interfaces
 │
 ├── scripts/
-│   ├── deploy-app.sh             # Ship dashboard to prod
+│   ├── deploy-app.sh             # Deploy dashboard to production
 │   └── setup.sh                  # Initial server bootstrapping
 │
 └── data/                         # Runtime data (gitignored)
