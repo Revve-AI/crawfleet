@@ -51,6 +51,12 @@ export default function TenantForm({ initial, mode }: Props) {
   const [sshPublicKey, setSshPublicKey] = useState("");
   const [cloudsLoaded, setCloudsLoaded] = useState(false);
 
+  // Tailscale fields
+  const [accessMode, setAccessMode] = useState<"private" | "funnel">("private");
+  const [tailscaleApiKey, setTailscaleApiKey] = useState("");
+  const [tailscaleTailnet, setTailscaleTailnet] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -92,6 +98,9 @@ export default function TenantForm({ initial, mode }: Props) {
         machineType,
         gitTag: gitTag || undefined,
         sshPublicKey: sshPublicKey.trim() || undefined,
+        accessMode,
+        tailscaleApiKey: tailscaleApiKey.trim() || undefined,
+        tailscaleTailnet: tailscaleTailnet.trim() || undefined,
         ...(Object.keys(envOverrides).length > 0 ? { envOverrides } : {}),
       };
 
@@ -316,20 +325,12 @@ export default function TenantForm({ initial, mode }: Props) {
             <p className="text-emerald-400 font-semibold">Instance is ready</p>
           </div>
           <p className="text-sm text-zinc-300">
-            Open the shell to continue setup with OpenClaw onboard.
+            Connect via SSH to continue setup with OpenClaw onboard.
           </p>
           <div className="flex gap-3 pt-1">
             <a
-              href={`/tenants/${provision.slug}/shell`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-5 py-2.5 bg-brand hover:bg-brand-light text-white font-medium rounded-lg transition-colors text-sm"
-            >
-              Open Shell
-            </a>
-            <a
               href={`/tenants/${provision.slug}/ssh`}
-              className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-lg transition-colors text-sm border border-zinc-700/60"
+              className="px-5 py-2.5 bg-brand hover:bg-brand-light text-white font-medium rounded-lg transition-colors text-sm"
             >
               SSH Setup
             </a>
@@ -468,7 +469,62 @@ export default function TenantForm({ initial, mode }: Props) {
               rows={3}
               className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors font-mono text-xs resize-none"
             />
-            <p className="text-xs text-zinc-500 mt-1.5">Enables SSH access to the VM via cloudflared. You can also add this later from the SSH tab.</p>
+            <p className="text-xs text-zinc-500 mt-1.5">Enables SSH access to the VM. You can also add this later from the SSH tab.</p>
+          </div>
+
+          {/* Access Mode */}
+          <div>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Access Mode</label>
+            <select
+              value={accessMode}
+              onChange={(e) => setAccessMode(e.target.value as "private" | "funnel")}
+              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50"
+            >
+              <option value="private">Private (tailnet only)</option>
+              <option value="funnel">Public (Tailscale Funnel)</option>
+            </select>
+            <p className="text-xs text-zinc-500 mt-1.5">
+              Private: only accessible within the Tailscale tailnet. Funnel: publicly accessible via HTTPS.
+            </p>
+          </div>
+
+          {/* Advanced: Tailscale Credentials */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${showAdvanced ? "rotate-90" : ""}`}>
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              Advanced: Tailscale Credentials
+            </button>
+            {showAdvanced && (
+              <div className="mt-3 space-y-3 p-3 bg-zinc-950/50 border border-zinc-800/40 rounded-lg">
+                <p className="text-xs text-zinc-500">Provide your own Tailscale credentials to use a dedicated tailnet. Leave blank to use the fleet-wide tailnet.</p>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1.5">Tailscale API Key</label>
+                  <input
+                    type="password"
+                    value={tailscaleApiKey}
+                    onChange={(e) => setTailscaleApiKey(e.target.value)}
+                    placeholder="tskey-api-..."
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1.5">Tailscale Tailnet</label>
+                  <input
+                    type="text"
+                    value={tailscaleTailnet}
+                    onChange={(e) => setTailscaleTailnet(e.target.value)}
+                    placeholder="company.github"
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/50 transition-colors font-mono text-sm"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}

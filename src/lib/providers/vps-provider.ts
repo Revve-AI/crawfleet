@@ -1,29 +1,20 @@
-import { Duplex } from "stream";
 import { getCloudProvider } from "../clouds";
-import { connectWithRetry, connectSSHThroughTunnel, execSSH, shellSSH, escapeForBash } from "./ssh";
+import { connectWithRetry, execSSH, escapeForBash } from "./ssh";
 import {
   generateSetupScript,
-  generateInstallCloudflaredScript,
+  generateInstallTailscaleScript,
   generateDeployScript,
   generateWriteConfigScript,
-  generateLockdownScript,
 } from "./vps-setup-script";
-import {
-  createTunnel,
-  configureTunnelIngress,
-  createTunnelDNS,
-  createTunnelSSHDNS,
-  deleteTunnel,
-} from "../cloudflare-tunnel";
+import { deleteTunnel } from "../cloudflare-tunnel";
 import { resolveAllEnv } from "../key-resolver";
+import { resolveTailscaleCredentials, createAuthKey, deleteDevice, findDeviceByHostname } from "../tailscale";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   VPS_SSH_PUBLIC_KEY,
-  CLOUDFLARE_DOMAIN,
-  FLEET_TLS,
   OPENCLAW_DEFAULT_GIT_TAG,
 } from "../constants";
-import type { TenantProvider, TenantWithVps, ShellHandle, StatusCallback, ProvisionStage } from "./types";
+import type { TenantProvider, TenantWithVps, StatusCallback, ProvisionStage } from "./types";
 import { PartialProvisioningError } from "./types";
 
 // Note: This file uses ssh2's Client.exec() method for remote command execution
@@ -32,6 +23,8 @@ import { PartialProvisioningError } from "./types";
 /** Prefix for systemctl --user commands (ensure XDG_RUNTIME_DIR is set for SSH sessions) */
 const SYSTEMCTL_USER = "export XDG_RUNTIME_DIR=/run/user/$(id -u) && systemctl --user";
 const SVC = "openclaw-gateway";
+
+
 
 export class VpsProvider implements TenantProvider {
   private async setProvisionStage(vpsId: string, stage: ProvisionStage): Promise<void> {
@@ -76,9 +69,6 @@ export class VpsProvider implements TenantProvider {
       await this.setProvisionStage(vps.id, "vm_ready");
 
       // 3. SSH in, run hardening + setup
-      // GCP injects the SSH key for user "openclaw", so connect as that user
-      // and use sudo for root operations.
-      // Note: execSSH uses ssh2 Client.exec() — remote SSH command, not local shell
       onStatus?.("Hardening OS and installing dependencies");
       const envVars = await resolveAllEnv(tenant);
       const conn = await connectWithRetry({
@@ -89,9 +79,9 @@ export class VpsProvider implements TenantProvider {
       const setupScript = generateSetupScript({
         sshPublicKey: VPS_SSH_PUBLIC_KEY,
         gitTag,
-        tunnelToken: "",
         envVars,
         gatewayToken: tenant.gateway_token,
+        accessMode: tenant.access_mode,
       });
       const setupResult = await execSSH(
         conn,
@@ -133,7 +123,7 @@ export class VpsProvider implements TenantProvider {
   }
 
   /**
-   * Runs provisioning stages after VM setup (tunnel, cloudflared, service, health, lockdown).
+   * Runs provisioning stages after VM setup (tailscale, service, health, lockdown).
    * On failure, throws PartialProvisioningError with the last completed stage.
    */
   private async runPostSetupStages(
@@ -144,59 +134,66 @@ export class VpsProvider implements TenantProvider {
     startAfter?: ProvisionStage,
   ): Promise<void> {
     const postSetupStages: ProvisionStage[] = [
-      "tunnel_created",
-      "cloudflared_installed",
+      "tailscale_installed",
       "service_started",
       "health_checked",
-      "locked_down",
     ];
     const startIdx = startAfter
       ? postSetupStages.indexOf(startAfter) + 1
       : 0;
     let lastCompleted: ProvisionStage = startAfter || "vm_setup";
 
-    // Re-read VPS data for tunnel info (may have been updated in a previous partial run)
-    const { data: freshVps } = await supabaseAdmin
-      .from("vps_instances")
-      .select("*")
-      .eq("id", vpsId)
-      .single();
-    if (!freshVps) throw new Error("VPS instance not found");
-
-    let tunnelId = freshVps.tunnel_id;
-    let tunnelToken = freshVps.tunnel_token;
-
     for (let i = startIdx; i < postSetupStages.length; i++) {
       const stage = postSetupStages[i];
       try {
         switch (stage) {
-          case "tunnel_created": {
-            onStatus?.("Creating Cloudflare Tunnel");
-            const tunnel = await createTunnel(tenant.slug);
-            tunnelId = tunnel.tunnelId;
-            tunnelToken = tunnel.tunnelToken;
-            await configureTunnelIngress(tunnelId, tenant.slug, CLOUDFLARE_DOMAIN);
-            await createTunnelDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
-            await createTunnelSSHDNS(tenant.slug, tunnelId, CLOUDFLARE_DOMAIN);
-            await supabaseAdmin
-              .from("vps_instances")
-              .update({ tunnel_id: tunnelId, tunnel_token: tunnelToken })
-              .eq("id", vpsId);
-            break;
-          }
-          case "cloudflared_installed": {
-            if (!tunnelToken) throw new Error("No tunnel token — tunnel_created stage must run first");
-            onStatus?.("Installing tunnel connector");
-            const cfConn = await connectWithRetry({ host: ip, username: "openclaw" });
-            const cfScript = generateInstallCloudflaredScript(tunnelToken);
-            const cfResult = await execSSH(
-              cfConn,
-              `sudo bash -c ${escapeForBash(cfScript)}`,
+          case "tailscale_installed": {
+            onStatus?.("Installing Tailscale");
+            const creds = await resolveTailscaleCredentials(tenant);
+            const tsHostname = `fleet-${tenant.slug}`;
+            const authKey = await createAuthKey(creds, tenant.slug);
+
+            const tsConn = await connectWithRetry({ host: ip, username: "openclaw" });
+            const tsScript = generateInstallTailscaleScript(authKey, tsHostname);
+            const tsResult = await execSSH(
+              tsConn,
+              `sudo bash -c ${escapeForBash(tsScript)}`,
               300_000,
             );
-            cfConn.end();
-            if (cfResult.code !== 0) {
-              throw new Error(`cloudflared install failed (exit ${cfResult.code}):\nSTDOUT: ${cfResult.stdout.slice(-2000)}\nSTDERR: ${cfResult.stderr.slice(-2000)}`);
+            tsConn.end();
+            if (tsResult.code !== 0) {
+              throw new Error(`Tailscale install failed (exit ${tsResult.code}):\nSTDOUT: ${tsResult.stdout.slice(-2000)}\nSTDERR: ${tsResult.stderr.slice(-2000)}`);
+            }
+
+            // Discover device in tailnet
+            onStatus?.("Discovering Tailscale device");
+            let device = null;
+            for (let attempt = 0; attempt < 10; attempt++) {
+              device = await findDeviceByHostname(creds, tsHostname);
+              if (device) break;
+              await new Promise((r) => setTimeout(r, 3_000));
+            }
+
+            if (device) {
+              await supabaseAdmin
+                .from("vps_instances")
+                .update({
+                  tailscale_device_id: device.deviceId,
+                  tailscale_ip: device.ip,
+                  tailscale_hostname: tsHostname,
+                })
+                .eq("id", vpsId);
+            } else {
+              // Parse IP from script output as fallback
+              const ipMatch = tsResult.stdout.match(/TAILSCALE_IP=(\S+)/);
+              await supabaseAdmin
+                .from("vps_instances")
+                .update({
+                  tailscale_ip: ipMatch?.[1] || null,
+                  tailscale_hostname: tsHostname,
+                })
+                .eq("id", vpsId);
+              console.warn(`[vps] Could not discover Tailscale device for ${tenant.slug} — saved IP from script output`);
             }
             break;
           }
@@ -212,21 +209,6 @@ export class VpsProvider implements TenantProvider {
             const healthy = await this.waitForHealthy(tenant, 300_000, onStatus);
             if (!healthy) {
               throw new Error("Health check timed out — OpenClaw failed to start");
-            }
-            break;
-          }
-          case "locked_down": {
-            onStatus?.("Locking down firewall");
-            const lockConn = await connectWithRetry({ host: ip, username: "openclaw" });
-            const lockdownScript = generateLockdownScript();
-            const lockdownResult = await execSSH(
-              lockConn,
-              `sudo bash -c ${escapeForBash(lockdownScript)}`,
-              30_000,
-            );
-            lockConn.end();
-            if (lockdownResult.code !== 0) {
-              console.warn(`[vps] Firewall lockdown warning for ${tenant.slug}: ${lockdownResult.stderr}`);
             }
             break;
           }
@@ -278,21 +260,26 @@ export class VpsProvider implements TenantProvider {
     console.log(`[vps] Rolling back creation of ${tenant.slug}`);
     const vps = tenant.vps_instances;
 
-    // Re-read tunnel_id from DB — the in-memory vps object is stale
-    // (tunnel is created and saved to DB during create(), after the original object was passed in)
-    let tunnelId = vps?.tunnel_id;
-    if (!tunnelId && vps) {
+    // Check for Tailscale device or legacy tunnel to clean up
+    if (vps) {
       const { data } = await supabaseAdmin
         .from("vps_instances")
-        .select("tunnel_id")
+        .select("tunnel_id, tailscale_device_id")
         .eq("id", vps.id)
         .single();
-      tunnelId = data?.tunnel_id ?? null;
-    }
 
-    // Delete tunnel + its DNS records if created
-    if (tunnelId) {
-      await deleteTunnel(tunnelId).catch(() => {});
+      // Clean up Tailscale device if created
+      if (data?.tailscale_device_id) {
+        try {
+          const creds = await resolveTailscaleCredentials(tenant);
+          await deleteDevice(creds, data.tailscale_device_id);
+        } catch { /* device may not exist */ }
+      }
+
+      // Clean up legacy tunnel if present
+      if (data?.tunnel_id) {
+        await deleteTunnel(data.tunnel_id).catch(() => {});
+      }
     }
 
     // Delete VM
@@ -325,18 +312,28 @@ export class VpsProvider implements TenantProvider {
       onStatus?.("Starting VM");
       await cloud.startVm(vps.instance_id, vps.region);
       onStatus?.("Waiting for VM to boot");
-      await cloud.waitForReady(vps.instance_id, vps.region);
+      const newIp = await cloud.waitForReady(vps.instance_id, vps.region);
+
+      // GCP ephemeral IPs can change on stop/start — update DB
+      if (newIp !== vps.external_ip) {
+        await supabaseAdmin
+          .from("vps_instances")
+          .update({ external_ip: newIp })
+          .eq("id", vps.id);
+        vps.external_ip = newIp;
+      }
     }
 
-    // Start the OpenClaw service via tunnel (more retries — cloudflared needs time after VM boot)
-    onStatus?.("Waiting for tunnel to reconnect");
-    if (!vps.tunnel_id) throw new Error("No tunnel configured for VPS");
-    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user, 6);
+    if (!vps.external_ip) throw new Error("No external IP for VPS");
+
+    // Start the OpenClaw service via direct SSH
+    onStatus?.("Connecting to VM");
+    const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user }, 6);
     try {
       onStatus?.("Starting OpenClaw service");
-      await execSSH(tunnel.conn, `${SYSTEMCTL_USER} start ${SVC}`, 30_000);
+      await execSSH(conn, `${SYSTEMCTL_USER} start ${SVC}`, 30_000);
     } finally {
-      tunnel.close();
+      conn.end();
     }
 
     await supabaseAdmin
@@ -349,12 +346,11 @@ export class VpsProvider implements TenantProvider {
     const vps = tenant.vps_instances;
     if (!vps) throw new Error("No VPS instance");
 
-    // Stop the OpenClaw service (keep VM running to preserve tunnel)
-    if (vps.tunnel_id) {
+    if (vps.external_ip) {
       try {
-        const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
-        await execSSH(tunnel.conn, `${SYSTEMCTL_USER} stop ${SVC}`, 30_000);
-        tunnel.close();
+        const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user });
+        await execSSH(conn, `${SYSTEMCTL_USER} stop ${SVC}`, 30_000);
+        conn.end();
       } catch {
         // VM may be unreachable
       }
@@ -368,13 +364,13 @@ export class VpsProvider implements TenantProvider {
 
   async restart(tenant: TenantWithVps): Promise<void> {
     const vps = tenant.vps_instances;
-    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
+    if (!vps?.external_ip) throw new Error("No external IP for VPS");
 
-    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
+    const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user });
     try {
-      await execSSH(tunnel.conn, `${SYSTEMCTL_USER} restart ${SVC}`, 30_000);
+      await execSSH(conn, `${SYSTEMCTL_USER} restart ${SVC}`, 30_000);
     } finally {
-      tunnel.close();
+      conn.end();
     }
   }
 
@@ -382,14 +378,24 @@ export class VpsProvider implements TenantProvider {
     const vps = tenant.vps_instances;
     if (!vps) return;
 
-    // 1. Delete Cloudflare Tunnel
+    // 1. Delete Tailscale device from tailnet
+    if (vps.tailscale_device_id) {
+      try {
+        const creds = await resolveTailscaleCredentials(tenant);
+        await deleteDevice(creds, vps.tailscale_device_id);
+      } catch (e) {
+        console.error("[vps] Failed to delete Tailscale device:", e);
+      }
+    }
+
+    // 2. Delete legacy Cloudflare Tunnel if present (backward compat)
     if (vps.tunnel_id) {
       await deleteTunnel(vps.tunnel_id).catch((e) =>
         console.error("[vps] Failed to delete tunnel:", e),
       );
     }
 
-    // 2. Delete VM (Access app deletion is handled by the route handler)
+    // 3. Delete VM
     try {
       const cloud = getCloudProvider(vps.cloud);
       await cloud.deleteVm(vps.instance_id, vps.region);
@@ -400,29 +406,29 @@ export class VpsProvider implements TenantProvider {
 
   async deploy(tenant: TenantWithVps, onStatus?: StatusCallback): Promise<string> {
     const vps = tenant.vps_instances;
-    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
+    if (!vps?.external_ip) throw new Error("No external IP for VPS");
 
     const gitTag = vps.git_tag || OPENCLAW_DEFAULT_GIT_TAG;
 
     onStatus?.("Connecting to VM");
-    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
+    const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user });
 
     try {
-      // Update env vars (writes to user home, no sudo needed)
+      // Update env vars
       onStatus?.("Updating configuration");
       const envVars = await resolveAllEnv(tenant);
-      const configScript = generateWriteConfigScript(envVars, tenant.gateway_token);
+      const configScript = generateWriteConfigScript(envVars, tenant.gateway_token, tenant.access_mode);
       await execSSH(
-        tunnel.conn,
+        conn,
         `bash -c ${escapeForBash(configScript)}`,
         30_000,
       );
 
-      // Deploy new version (installer needs sudo for global npm, service commands run as user)
+      // Deploy new version
       onStatus?.("Deploying new version");
       const deployScript = generateDeployScript(gitTag);
       const result = await execSSH(
-        tunnel.conn,
+        conn,
         `bash -c ${escapeForBash(deployScript)}`,
         300_000,
       );
@@ -431,7 +437,7 @@ export class VpsProvider implements TenantProvider {
         throw new Error(`Deploy failed: ${result.stderr}`);
       }
     } finally {
-      tunnel.close();
+      conn.end();
     }
 
     onStatus?.("Waiting for health check");
@@ -454,17 +460,33 @@ export class VpsProvider implements TenantProvider {
   }
 
   async getHealth(tenant: TenantWithVps): Promise<string> {
-    const scheme = FLEET_TLS ? "https" : "http";
-    const url = `${scheme}://${tenant.slug}.${CLOUDFLARE_DOMAIN}/`;
+    const vps = tenant.vps_instances;
 
-    try {
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      return res.ok ? "healthy" : "unhealthy";
-    } catch {
-      return "unknown";
+    // Funnel mode: HTTP health check via Tailscale Funnel URL
+    if (tenant.access_mode === "funnel" && vps?.tailscale_hostname) {
+      try {
+        const creds = await resolveTailscaleCredentials(tenant);
+        const url = `https://${vps.tailscale_hostname}.${creds.tailnet}.ts.net/`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        return res.ok ? "healthy" : "unhealthy";
+      } catch {
+        return "unknown";
+      }
     }
+
+    // Private mode or fallback: SSH in and curl localhost
+    if (vps?.external_ip) {
+      try {
+        const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user }, 1);
+        const result = await execSSH(conn, "curl -sf http://localhost:18789/", 10_000);
+        conn.end();
+        return result.code === 0 ? "healthy" : "unhealthy";
+      } catch {
+        return "unknown";
+      }
+    }
+
+    return "unknown";
   }
 
   async waitForHealthy(
@@ -489,55 +511,36 @@ export class VpsProvider implements TenantProvider {
 
   async getLogs(tenant: TenantWithVps, tail: number): Promise<NodeJS.ReadableStream> {
     const vps = tenant.vps_instances;
-    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
+    if (!vps?.external_ip) throw new Error("No external IP for VPS");
 
-    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
+    const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user });
 
     // Uses ssh2 Client.exec() — remote command over SSH, not local shell
     return new Promise((resolve, reject) => {
-      tunnel.conn.exec(
+      conn.exec(
         `journalctl --user -u ${SVC} -f -n ${Number(tail)} --no-pager`,
         (err, stream) => {
           if (err) {
-            tunnel.close();
+            conn.end();
             reject(err);
             return;
           }
-          stream.on("close", () => tunnel.close());
-          stream.on("error", () => tunnel.close());
+          stream.on("close", () => conn.end());
+          stream.on("error", () => conn.end());
           resolve(stream as unknown as NodeJS.ReadableStream);
         },
       );
     });
   }
 
-  async execShell(tenant: TenantWithVps): Promise<ShellHandle> {
-    const vps = tenant.vps_instances;
-    if (!vps?.tunnel_id) throw new Error("No tunnel configured for VPS");
-
-    const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
-    const channel = await shellSSH(tunnel.conn);
-
-    return {
-      stream: channel as unknown as Duplex,
-      async resize(cols: number, rows: number) {
-        channel.setWindow(rows, cols, 0, 0);
-      },
-      destroy() {
-        channel.close();
-        tunnel.close();
-      },
-    };
-  }
-
   async removeTenantData(tenant: TenantWithVps): Promise<void> {
     const vps = tenant.vps_instances;
-    if (!vps?.tunnel_id) return;
+    if (!vps?.external_ip) return;
 
     try {
-      const tunnel = await connectSSHThroughTunnel(tenant.slug, vps.ssh_user);
-      await execSSH(tunnel.conn, "rm -rf ~/.openclaw /opt/openclaw", 30_000);
-      tunnel.close();
+      const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user });
+      await execSSH(conn, "rm -rf ~/.openclaw /opt/openclaw", 30_000);
+      conn.end();
     } catch {
       // VM may be unreachable
     }

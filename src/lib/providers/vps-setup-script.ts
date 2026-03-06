@@ -1,15 +1,21 @@
 interface SetupOptions {
   sshPublicKey: string;
   gitTag: string;
-  tunnelToken: string;
   envVars: Record<string, string>;
   gatewayToken: string;
+  accessMode: "private" | "funnel";
 }
 
 export function generateSetupScript(opts: SetupOptions): string {
   const envLines = Object.entries(opts.envVars)
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
+  const passwordEnv = opts.accessMode === "funnel"
+    ? `\nOPENCLAW_GATEWAY_PASSWORD=${opts.gatewayToken}`
+    : "";
+  const tailscaleFlags = opts.accessMode === "funnel"
+    ? " --tailscale funnel --auth password"
+    : " --tailscale serve";
 
   return `#!/bin/bash
 set -euo pipefail
@@ -75,7 +81,7 @@ mkdir -p /home/openclaw/.openclaw
 chown openclaw:openclaw /home/openclaw/.openclaw
 chmod 700 /home/openclaw/.openclaw
 cat > /home/openclaw/.openclaw/fleet.env << 'ENVEOF'
-OPENCLAW_GATEWAY_TOKEN=${opts.gatewayToken}
+OPENCLAW_GATEWAY_TOKEN=${opts.gatewayToken}${passwordEnv}
 HOME=/home/openclaw
 TERM=xterm-256color
 NODE_OPTIONS=--max-old-space-size=1024
@@ -94,7 +100,7 @@ cat > /home/openclaw/.config/systemd/user/openclaw-gateway.service.d/fleet.conf 
 [Service]
 EnvironmentFile=/home/openclaw/.openclaw/fleet.env
 ExecStart=
-ExecStart=\${OPENCLAW_BIN} gateway --port 18789 --allow-unconfigured
+ExecStart=\${OPENCLAW_BIN} gateway --port 18789 --allow-unconfigured${tailscaleFlags}
 DROPEOF
 chown -R openclaw:openclaw /home/openclaw/.config/systemd/user/openclaw-gateway.service.d
 
@@ -104,29 +110,45 @@ echo "=== Setup complete ==="
 `;
 }
 
-export function generateInstallCloudflaredScript(tunnelToken: string): string {
+export function generateInstallTailscaleScript(
+  authKey: string,
+  hostname: string,
+): string {
   return `#!/bin/bash
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-echo "=== Installing cloudflared ==="
+echo "=== Installing Tailscale ==="
 
-# Install cloudflared
-if ! command -v cloudflared &>/dev/null; then
-  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null
-  echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" \\
-    | tee /etc/apt/sources.list.d/cloudflared.list > /dev/null
-  apt-get update -qq
-  apt-get install -y -qq cloudflared > /dev/null
+# Install Tailscale
+if ! command -v tailscale &>/dev/null; then
+  curl -fsSL https://tailscale.com/install.sh | sh
 fi
 
-# Install as service with tunnel token
-cloudflared service install ${tunnelToken}
-systemctl enable cloudflared
-systemctl start cloudflared
+# Pin DNS to Google public DNS before Tailscale takes over resolution
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/dns.conf << 'DNSEOF'
+[Resolve]
+DNS=8.8.8.8 8.8.4.4
+DNSEOF
+systemctl restart systemd-resolved
 
-echo "=== cloudflared installed ==="
+# Join tailnet with pre-auth key and enable Tailscale SSH
+tailscale up --authkey=${authKey} --hostname=${hostname} --ssh
+
+# Wait for Tailscale to be connected
+for i in $(seq 1 30); do
+  if tailscale status --json 2>/dev/null | grep -q '"BackendState":"Running"'; then
+    break
+  fi
+  sleep 1
+done
+
+# Output Tailscale IP for discovery
+echo "TAILSCALE_IP=$(tailscale ip -4)"
+
+echo "=== Tailscale installed ==="
 `;
 }
 
@@ -147,22 +169,6 @@ systemctl --user daemon-reload
 systemctl --user start openclaw-gateway
 
 echo "=== Deploy complete ==="
-`;
-}
-
-export function generateLockdownScript(): string {
-  return `#!/bin/bash
-set -euo pipefail
-
-echo "=== Locking down firewall ==="
-
-# Remove the SSH allow rule and deny SSH + DNS inbound
-ufw delete allow ssh || true
-ufw deny 22/tcp
-ufw deny 53
-ufw reload
-
-echo "=== Firewall locked down: zero open ports ==="
 `;
 }
 
@@ -205,16 +211,19 @@ echo "=== User SSH key removed ==="
 `;
 }
 
-export function generateWriteConfigScript(envVars: Record<string, string>, gatewayToken: string): string {
+export function generateWriteConfigScript(envVars: Record<string, string>, gatewayToken: string, accessMode: "private" | "funnel"): string {
   const envLines = Object.entries(envVars)
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
+  const passwordEnv = accessMode === "funnel"
+    ? `\nOPENCLAW_GATEWAY_PASSWORD=${gatewayToken}`
+    : "";
 
   return `#!/bin/bash
 set -euo pipefail
 
 cat > /home/openclaw/.openclaw/fleet.env << 'ENVEOF'
-OPENCLAW_GATEWAY_TOKEN=${gatewayToken}
+OPENCLAW_GATEWAY_TOKEN=${gatewayToken}${passwordEnv}
 HOME=/home/openclaw
 TERM=xterm-256color
 NODE_OPTIONS=--max-old-space-size=1024

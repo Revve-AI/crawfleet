@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
-import { CLOUDFLARE_DOMAIN } from "@/lib/constants";
 import NavShell from "@/components/NavShell";
 import SshKeyForm from "@/components/SshKeyForm";
 
@@ -13,7 +12,7 @@ export default async function SshPage({ params }: { params: Promise<{ slug: stri
   const admin = isFleetAdmin(email);
   const { data: tenant } = await supabaseAdmin
     .from("tenants")
-    .select("slug, display_name, email, user_ssh_public_key, vps_instances(ssh_user)")
+    .select("slug, display_name, email, user_ssh_public_key, vps_instances(ssh_user, tailscale_ip, tailscale_hostname)")
     .eq("slug", slug)
     .single();
   if (!tenant) notFound();
@@ -21,7 +20,8 @@ export default async function SshPage({ params }: { params: Promise<{ slug: stri
 
   const vps = Array.isArray(tenant.vps_instances) ? tenant.vps_instances[0] : tenant.vps_instances;
   const sshUser = vps?.ssh_user || "openclaw";
-  const sshHost = `ssh-${slug}.${CLOUDFLARE_DOMAIN}`;
+  const tsHostname = vps?.tailscale_hostname || `fleet-${slug}`;
+  const tsIp = vps?.tailscale_ip;
 
   return (
     <NavShell isAdmin={admin}>
@@ -34,7 +34,7 @@ export default async function SshPage({ params }: { params: Promise<{ slug: stri
             {tenant.display_name}
           </a>
           <h1 className="text-2xl font-bold tracking-tight">SSH Access</h1>
-          <p className="text-zinc-500 mt-1 text-sm">Connect to <span className="font-mono text-zinc-400">{tenant.slug}</span> via SSH through Cloudflare Tunnel</p>
+          <p className="text-zinc-500 mt-1 text-sm">Connect to <span className="font-mono text-zinc-400">{tenant.slug}</span> via Tailscale SSH</p>
         </div>
 
         {/* SSH Key */}
@@ -42,28 +42,26 @@ export default async function SshPage({ params }: { params: Promise<{ slug: stri
 
         {/* Instructions */}
         <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-5 space-y-5">
-          <h2 className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">Setup Instructions</h2>
+          <h2 className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">Connection Methods</h2>
 
           <div className="space-y-4">
-            <Step n={1} title="Install cloudflared">
-              <Code>{`# macOS
-brew install cloudflared
-
-# Linux (Debian/Ubuntu)
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null
-echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt-get update && sudo apt-get install cloudflared`}</Code>
+            <Step n={1} title="Tailscale SSH (recommended)">
+              <p className="text-zinc-400 text-sm mb-2">If you&apos;re on the same tailnet, connect directly via Tailscale SSH (no keys needed):</p>
+              <Code>{`ssh ${sshUser}@${tsHostname}`}</Code>
             </Step>
 
-            <Step n={2} title="Add to your SSH config">
-              <p className="text-zinc-400 text-sm mb-2">Add this to <code className="text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded text-xs">~/.ssh/config</code>:</p>
-              <Code>{`Host ${sshHost}
-  ProxyCommand cloudflared access ssh --hostname %h
-  User ${sshUser}`}</Code>
-            </Step>
+            {tsIp && (
+              <Step n={2} title="Traditional SSH over Tailscale">
+                <p className="text-zinc-400 text-sm mb-2">Connect using the Tailscale IP with your SSH key:</p>
+                <Code>{`ssh -i ~/.ssh/your_key ${sshUser}@${tsIp}`}</Code>
+              </Step>
+            )}
 
-            <Step n={3} title="Connect">
-              <Code>{`ssh ${sshHost}`}</Code>
+            <Step n={tsIp ? 3 : 2} title="Allow your IP (for direct SSH)">
+              <p className="text-zinc-400 text-sm mb-2">
+                If you need SSH access from outside the tailnet, whitelist your IP from the tenant detail page, then:
+              </p>
+              <Code>{`ssh -i ~/.ssh/your_key ${sshUser}@<external-ip>`}</Code>
             </Step>
           </div>
         </div>

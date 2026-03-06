@@ -6,7 +6,10 @@ export interface Tenant {
   email: string | null;
   enabled: boolean;
   status: string;
+  access_mode: "private" | "funnel";
   access_app_id: string | null;
+  tailscale_api_key: string | null;
+  tailscale_tailnet: string | null;
   env_overrides: Record<string, string> | null;
   gateway_token: string;
   user_ssh_public_key: string | null;
@@ -26,6 +29,9 @@ export interface VpsInstance {
   external_ip: string | null;
   tunnel_id: string | null;
   tunnel_token: string | null;
+  tailscale_device_id: string | null;
+  tailscale_ip: string | null;
+  tailscale_hostname: string | null;
   git_tag: string | null;
   ssh_user: string;
   ssh_port: number;

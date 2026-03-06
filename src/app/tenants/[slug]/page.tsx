@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin } from "@/lib/auth";
-import { BASE_DOMAIN, FLEET_TLS, CLOUD_NAMES } from "@/lib/constants";
+import { CLOUD_NAMES, TAILSCALE_TAILNET } from "@/lib/constants";
 import NavShell from "@/components/NavShell";
 import StatusBadge from "@/components/StatusBadge";
 import TenantForm from "@/components/TenantForm";
@@ -22,12 +22,16 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
   if (!tenant) notFound();
   if (!admin && tenant.email !== email) notFound();
 
-  const scheme = FLEET_TLS ? "https" : "http";
-  const instanceUrl = `${scheme}://${tenant.slug}.${BASE_DOMAIN}`;
-  const openUrl = `${instanceUrl}/?token=${tenant.gateway_token}`;
-
   const vps = tenant.vps_instances;
   const cloudLabel = vps?.cloud ? (CLOUD_NAMES[vps.cloud] || vps.cloud) : "VPS";
+
+  // Build instance URL — both serve (private) and funnel use Tailscale HTTPS
+  const tailnet = tenant.tailscale_tailnet || TAILSCALE_TAILNET;
+  const tsHostname = vps?.tailscale_hostname;
+  const instanceUrl = tsHostname && tailnet
+    ? `https://${tsHostname}.${tailnet}.ts.net`
+    : null;
+  const openUrl = instanceUrl ? `${instanceUrl}/?token=${tenant.gateway_token}` : null;
 
   return (
     <NavShell isAdmin={admin}>
@@ -47,6 +51,13 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
                 <p className="text-zinc-500 text-sm font-mono">{tenant.slug}</p>
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-violet-500/10 text-violet-400 text-[10px] font-medium rounded border border-violet-500/20">
                   {cloudLabel}
+                </span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border ${
+                  tenant.access_mode === "funnel"
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                    : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+                }`}>
+                  {tenant.access_mode === "funnel" ? "Public (Funnel)" : "Private"}
                 </span>
               </div>
             </div>
@@ -90,27 +101,35 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
             <h2 className="text-[11px] text-zinc-500 uppercase tracking-wider font-medium">VPS Details</h2>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
               <div className="flex items-baseline gap-3">
-                <span className="text-zinc-500 text-xs w-16 shrink-0">Cloud</span>
+                <span className="text-zinc-500 text-xs w-20 shrink-0">Cloud</span>
                 <span className="text-zinc-200">{CLOUD_NAMES[vps.cloud] || vps.cloud}</span>
               </div>
               <div className="flex items-baseline gap-3">
-                <span className="text-zinc-500 text-xs w-16 shrink-0">Instance</span>
-                <code className="text-zinc-200 font-mono text-xs">{vps.instance_id || "—"}</code>
+                <span className="text-zinc-500 text-xs w-20 shrink-0">Instance</span>
+                <code className="text-zinc-200 font-mono text-xs">{vps.instance_id || "\u2014"}</code>
               </div>
               <div className="flex items-baseline gap-3">
-                <span className="text-zinc-500 text-xs w-16 shrink-0">IP</span>
-                <code className="text-zinc-200 font-mono text-xs">{vps.external_ip || "—"}</code>
+                <span className="text-zinc-500 text-xs w-20 shrink-0">External IP</span>
+                <code className="text-zinc-200 font-mono text-xs">{vps.external_ip || "\u2014"}</code>
               </div>
               <div className="flex items-baseline gap-3">
-                <span className="text-zinc-500 text-xs w-16 shrink-0">Git Tag</span>
+                <span className="text-zinc-500 text-xs w-20 shrink-0">Git Tag</span>
                 <code className="text-zinc-200 font-mono text-xs">{vps.git_tag || "latest"}</code>
               </div>
               <div className="flex items-baseline gap-3">
-                <span className="text-zinc-500 text-xs w-16 shrink-0">Tunnel</span>
-                <span className="text-zinc-200 text-xs">{vps.tunnel_id ? "Connected" : "—"}</span>
+                <span className="text-zinc-500 text-xs w-20 shrink-0">Tailscale IP</span>
+                <code className="text-zinc-200 font-mono text-xs">{vps.tailscale_ip || "\u2014"}</code>
               </div>
               <div className="flex items-baseline gap-3">
-                <span className="text-zinc-500 text-xs w-16 shrink-0">VM Status</span>
+                <span className="text-zinc-500 text-xs w-20 shrink-0">TS Hostname</span>
+                <code className="text-zinc-200 font-mono text-xs">{vps.tailscale_hostname || "\u2014"}</code>
+              </div>
+              <div className="flex items-baseline gap-3">
+                <span className="text-zinc-500 text-xs w-20 shrink-0">Access Mode</span>
+                <span className="text-zinc-200 text-xs">{tenant.access_mode}</span>
+              </div>
+              <div className="flex items-baseline gap-3">
+                <span className="text-zinc-500 text-xs w-20 shrink-0">VM Status</span>
                 <span className="text-zinc-200 text-xs">{vps.vm_status}</span>
               </div>
             </div>
@@ -123,7 +142,11 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
           <div className="space-y-2">
             <div className="flex items-baseline gap-3 text-sm">
               <span className="text-zinc-500 text-xs w-12 shrink-0">URL</span>
-              <code className="text-zinc-200 font-mono text-xs">{instanceUrl}</code>
+              {instanceUrl ? (
+                <code className="text-zinc-200 font-mono text-xs">{instanceUrl}</code>
+              ) : (
+                <span className="text-zinc-400 text-xs">Not available &mdash; Tailscale not configured</span>
+              )}
             </div>
             <div className="flex items-baseline gap-3 text-sm">
               <span className="text-zinc-500 text-xs w-12 shrink-0">Token</span>
@@ -131,25 +154,19 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
             </div>
           </div>
           <div className="flex gap-2 pt-1">
-            <a
-              href={openUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand hover:bg-brand-light text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              Open Instance
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
-              </svg>
-            </a>
-            <a
-              href={`/tenants/${tenant.slug}/shell`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors border border-zinc-700/60"
-            >
-              Shell
-            </a>
+            {openUrl && (
+              <a
+                href={openUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand hover:bg-brand-light text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                Open Instance
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
+                </svg>
+              </a>
+            )}
             <a
               href={`/tenants/${tenant.slug}/logs`}
               className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium rounded-lg transition-colors border border-zinc-700/60"
@@ -171,6 +188,8 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ s
           status={tenant.status}
           isAdmin={admin}
           currentGitTag={vps?.git_tag}
+          hasTunnel={!!vps?.tunnel_id}
+          hasTailscale={!!vps?.tailscale_device_id}
         />
 
         {/* Configuration (admin only) */}

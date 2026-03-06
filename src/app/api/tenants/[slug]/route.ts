@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireFleetAdmin } from "@/lib/auth";
 import { requireTenantAccess } from "@/lib/tenant-access";
-import { deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { getProvider } from "@/lib/providers";
 import { TenantUpdateInput } from "@/types";
 import { apiError } from "@/lib/api-error";
@@ -33,7 +32,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     await requireFleetAdmin();
     const { slug } = await params;
-    const { email: _email, envOverrides: incomingOverrides, ...body }: TenantUpdateInput & { email?: string } = await req.json();
+    const { email: _email, envOverrides: incomingOverrides, accessMode, ...body }: TenantUpdateInput & { email?: string } = await req.json();
 
     const { data: tenant } = await supabaseAdmin
       .from("tenants")
@@ -46,6 +45,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const dbData: Record<string, unknown> = {};
     if (body.displayName !== undefined) dbData.display_name = body.displayName;
     if (body.enabled !== undefined) dbData.enabled = body.enabled;
+    if (accessMode !== undefined) dbData.access_mode = accessMode;
 
     if (incomingOverrides) {
       const existing: Record<string, string> = tenant.env_overrides || {};
@@ -70,7 +70,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     await supabaseAdmin.from("audit_logs").insert({
       tenant_id: tenant.id,
       action: envChanged ? "tenant.env_changed" : "config.updated",
-      details: { ...body, ...(incomingOverrides ? { envOverrides: Object.keys(incomingOverrides) } : {}) },
+      details: { ...body, ...(accessMode ? { accessMode } : {}), ...(incomingOverrides ? { envOverrides: Object.keys(incomingOverrides) } : {}) },
     });
 
     const { env_overrides: rawOverrides, ...safeData } = updated!;
@@ -99,15 +99,6 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
     await provider.removeTenantData(tenant);
     await provider.remove(tenant);
-
-    // Delete Cloudflare Access app
-    if (tenant.access_app_id) {
-      try {
-        await deleteTenantAccessApp(tenant.access_app_id);
-      } catch (cfErr) {
-        console.error("Failed to delete Cloudflare Access app:", cfErr);
-      }
-    }
 
     await supabaseAdmin.from("audit_logs").insert({
       tenant_id: null,

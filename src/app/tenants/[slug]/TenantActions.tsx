@@ -9,11 +9,15 @@ export default function TenantActions({
   status,
   isAdmin,
   currentGitTag,
+  hasTunnel,
+  hasTailscale,
 }: {
   slug: string;
   status: string;
   isAdmin: boolean;
   currentGitTag?: string | null;
+  hasTunnel?: boolean;
+  hasTailscale?: boolean;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState("");
@@ -105,7 +109,13 @@ export default function TenantActions({
     router.refresh();
   }
 
-  const isStreaming = loading === "start" || loading === "deploy" || loading === "resume";
+  async function handleMigrate() {
+    if (!confirm(`Migrate "${slug}" from Cloudflare Tunnel to Tailscale? This will install Tailscale, update the firewall, and remove the Cloudflare Tunnel.`)) return;
+    await streamAction("migrate", `/api/tenants/${slug}/migrate-tailscale`);
+  }
+
+  const needsMigration = hasTunnel && !hasTailscale;
+  const isStreaming = loading === "start" || loading === "deploy" || loading === "resume" || loading === "migrate";
 
   return (
     <div className="bg-zinc-900/80 border border-zinc-800/60 rounded-xl p-4 space-y-3">
@@ -155,6 +165,16 @@ export default function TenantActions({
             className="px-3.5 py-2 text-sm bg-brand/10 text-brand-light border border-brand/20 rounded-lg hover:bg-brand/20 transition-colors disabled:opacity-50 font-medium"
           >
             Deploy
+          </button>
+        )}
+
+        {isAdmin && needsMigration && (
+          <button
+            onClick={handleMigrate}
+            disabled={!!loading}
+            className="px-3.5 py-2 text-sm bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-lg hover:bg-sky-500/20 transition-colors disabled:opacity-50 font-medium"
+          >
+            {loading === "migrate" ? "Migrating..." : "Migrate to Tailscale"}
           </button>
         )}
 

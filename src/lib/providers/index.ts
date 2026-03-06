@@ -10,4 +10,4 @@ export async function getProvider(): Promise<TenantProvider> {
   return vpsProvider;
 }
 
-export type { TenantProvider, TenantWithVps, ShellHandle, StatusCallback } from "./types";
+export type { TenantProvider, TenantWithVps, StatusCallback } from "./types";

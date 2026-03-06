@@ -1,10 +1,6 @@
-import { Client as SSHClient, ClientChannel } from "ssh2";
+import { Client as SSHClient } from "ssh2";
 import fs from "fs";
-import { VPS_SSH_KEY_PATH, CLOUDFLARE_DOMAIN } from "../constants";
-import {
-  startCloudflaredProxy,
-  type CloudflaredProxy,
-} from "./cloudflared-proxy";
+import { VPS_SSH_KEY_PATH } from "../constants";
 
 export interface SSHConfig {
   host: string;
@@ -53,10 +49,8 @@ export function connectSSH(config: SSHConfig): Promise<SSHClient> {
 }
 
 /**
- * Execute a command over SSH. Uses ssh2's exec method which runs a single
- * command on the remote host — there is no shell injection risk since
- * the command string is sent as-is to the SSH server (not passed through
- * a local shell).
+ * Run a command over SSH via ssh2 Client.exec() — the command is sent
+ * directly to the remote SSH server, not through a local shell.
  */
 export function execSSH(
   conn: SSHClient,
@@ -92,21 +86,6 @@ export function execSSH(
   });
 }
 
-export function shellSSH(conn: SSHClient): Promise<ClientChannel> {
-  return new Promise((resolve, reject) => {
-    conn.shell(
-      { term: "xterm-256color", cols: 80, rows: 24 },
-      (err, stream) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(stream);
-      },
-    );
-  });
-}
-
 export async function connectWithRetry(
   config: SSHConfig,
   retries = 3,
@@ -116,49 +95,6 @@ export async function connectWithRetry(
     try {
       return await connectSSH(config);
     } catch (err) {
-      lastErr = err as Error;
-      if (i < retries - 1) {
-        const delay = 5_000 * Math.pow(2, i);
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
-  }
-  throw lastErr;
-}
-
-export interface TunnelSSHConnection {
-  conn: SSHClient;
-  proxy: CloudflaredProxy;
-  close(): void;
-}
-
-export async function connectSSHThroughTunnel(
-  slug: string,
-  username: string,
-  retries = 3,
-): Promise<TunnelSSHConnection> {
-  const sshHostname = `ssh-${slug}.${CLOUDFLARE_DOMAIN}`;
-  let lastErr: Error | undefined;
-
-  for (let i = 0; i < retries; i++) {
-    let proxy: CloudflaredProxy | undefined;
-    try {
-      proxy = await startCloudflaredProxy(sshHostname);
-      const conn = await connectSSH({
-        host: "127.0.0.1",
-        port: proxy.localPort,
-        username,
-      });
-      return {
-        conn,
-        proxy,
-        close() {
-          conn.end();
-          proxy!.kill();
-        },
-      };
-    } catch (err) {
-      proxy?.kill();
       lastErr = err as Error;
       if (i < retries - 1) {
         const delay = 5_000 * Math.pow(2, i);

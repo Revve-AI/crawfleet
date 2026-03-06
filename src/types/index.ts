@@ -8,12 +8,16 @@ export interface TenantCreateInput {
   region: string;
   gitTag?: string;
   sshPublicKey?: string;
+  accessMode?: "private" | "funnel";
+  tailscaleApiKey?: string;
+  tailscaleTailnet?: string;
 }
 
 export interface TenantUpdateInput {
   displayName?: string;
   enabled?: boolean;
   envOverrides?: Record<string, string>;
+  accessMode?: "private" | "funnel";
 }
 
 export interface FleetStats {

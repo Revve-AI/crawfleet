@@ -23,3 +23,8 @@ export const CLOUDFLARE_DOMAIN = process.env.CLOUDFLARE_DOMAIN || BASE_DOMAIN;
 
 // GCP
 export const GCP_PROJECT = process.env.GCP_PROJECT || "";
+
+// Tailscale (global defaults — tenants can override with their own credentials)
+export const TAILSCALE_API_KEY = process.env.TAILSCALE_API_KEY || "";
+export const TAILSCALE_TAILNET = process.env.TAILSCALE_TAILNET || "";
+export const DASHBOARD_PUBLIC_IP = process.env.DASHBOARD_PUBLIC_IP || "";

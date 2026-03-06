@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireTenantAccess } from "@/lib/tenant-access";
-import { connectSSHThroughTunnel, execSSH, escapeForBash } from "@/lib/providers/ssh";
+import { connectWithRetry, execSSH, escapeForBash } from "@/lib/providers/ssh";
 import {
   generateAddUserSshKeyScript,
   generateRemoveUserSshKeyScript,
@@ -15,7 +15,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
     const vps = tenant.vps_instances;
-    if (!vps?.tunnel_id) {
+    if (!vps?.external_ip) {
       return NextResponse.json({ error: "VM not provisioned" }, { status: 400 });
     }
 
@@ -29,12 +29,12 @@ export async function PUT(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Invalid SSH public key format" }, { status: 400 });
     }
 
-    // Push key to VM
-    const tunnel = await connectSSHThroughTunnel(slug, vps.ssh_user);
+    // Push key to VM via direct SSH
+    const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user });
     try {
       const script = generateAddUserSshKeyScript(trimmed);
       const result = await execSSH(
-        tunnel.conn,
+        conn,
         `sudo bash -c ${escapeForBash(script)}`,
         30_000,
       );
@@ -42,7 +42,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
         throw new Error(`Failed to install SSH key: ${result.stderr}`);
       }
     } finally {
-      tunnel.close();
+      conn.end();
     }
 
     // Save to DB
@@ -68,21 +68,21 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     const { slug } = await params;
     const tenant = await requireTenantAccess(slug);
     const vps = tenant.vps_instances;
-    if (!vps?.tunnel_id) {
+    if (!vps?.external_ip) {
       return NextResponse.json({ error: "VM not provisioned" }, { status: 400 });
     }
 
-    // Remove key from VM
-    const tunnel = await connectSSHThroughTunnel(slug, vps.ssh_user);
+    // Remove key from VM via direct SSH
+    const conn = await connectWithRetry({ host: vps.external_ip, username: vps.ssh_user });
     try {
       const script = generateRemoveUserSshKeyScript();
       await execSSH(
-        tunnel.conn,
+        conn,
         `sudo bash -c ${escapeForBash(script)}`,
         30_000,
       );
     } finally {
-      tunnel.close();
+      conn.end();
     }
 
     // Clear from DB

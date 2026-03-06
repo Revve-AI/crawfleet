@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthEmail, isFleetAdmin, requireFleetAdmin } from "@/lib/auth";
 import { generateToken } from "@/lib/crypto";
-import { createTenantAccessApp, deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { getProvider } from "@/lib/providers";
 import { PartialProvisioningError } from "@/lib/providers/types";
-import { connectSSHThroughTunnel, execSSH, escapeForBash } from "@/lib/providers/ssh";
+import { connectWithRetry, execSSH, escapeForBash } from "@/lib/providers/ssh";
 import { generateAddUserSshKeyScript } from "@/lib/providers/vps-setup-script";
 import { TenantCreateInput } from "@/types";
 import { apiError } from "@/lib/api-error";
@@ -20,6 +19,9 @@ function validateCreate(body: TenantCreateInput): string | null {
   if (!body.cloud) return "Cloud provider is required";
   if (!body.region) return "Region is required";
   if (!body.machineType) return "Machine type is required";
+  if (body.accessMode && !["private", "funnel"].includes(body.accessMode)) {
+    return "Access mode must be 'private' or 'funnel'";
+  }
   return null;
 }
 
@@ -62,9 +64,6 @@ export async function POST(req: NextRequest) {
       .single();
     if (existing) throw new Error("Slug already in use");
 
-    send("status", { step: "Creating Cloudflare Access app" });
-    const accessAppId = await createTenantAccessApp(body.slug, body.email);
-
     // Create tenant
     const { data: tenant, error: tenantError } = await supabaseAdmin
       .from("tenants")
@@ -75,7 +74,9 @@ export async function POST(req: NextRequest) {
         env_overrides: body.envOverrides || null,
         user_ssh_public_key: body.sshPublicKey || null,
         gateway_token: generateToken(),
-        access_app_id: accessAppId,
+        access_mode: body.accessMode || "private",
+        tailscale_api_key: body.tailscaleApiKey || null,
+        tailscale_tailnet: body.tailscaleTailnet || null,
       })
       .select()
       .single();
@@ -109,20 +110,29 @@ export async function POST(req: NextRequest) {
         .update({ status: "running" })
         .eq("slug", body.slug);
 
-      // Install user SSH key if provided
+      // Install user SSH key if provided — via direct SSH to external IP
       if (body.sshPublicKey) {
         send("status", { step: "Installing SSH key" });
         try {
-          const tunnel = await connectSSHThroughTunnel(body.slug, "openclaw");
-          try {
-            const script = generateAddUserSshKeyScript(body.sshPublicKey);
-            await execSSH(
-              tunnel.conn,
-              `sudo bash -c ${escapeForBash(script)}`,
-              30_000,
-            );
-          } finally {
-            tunnel.close();
+          // Re-read VPS to get external_ip (set during provisioning)
+          const { data: freshVps } = await supabaseAdmin
+            .from("vps_instances")
+            .select("external_ip")
+            .eq("tenant_id", tenant.id)
+            .single();
+
+          if (freshVps?.external_ip) {
+            const conn = await connectWithRetry({ host: freshVps.external_ip, username: "openclaw" });
+            try {
+              const script = generateAddUserSshKeyScript(body.sshPublicKey);
+              await execSSH(
+                conn,
+                `sudo bash -c ${escapeForBash(script)}`,
+                30_000,
+              );
+            } finally {
+              conn.end();
+            }
           }
         } catch (err) {
           // Non-fatal — user can add key later from the SSH tab
@@ -138,13 +148,14 @@ export async function POST(req: NextRequest) {
           cloud: body.cloud,
           region: body.region,
           instanceId,
+          accessMode: body.accessMode || "private",
         },
       });
 
       send("done", { slug: tenant.slug });
     } catch (err) {
       if (err instanceof PartialProvisioningError) {
-        // VM is set up — preserve tenant, VPS record, and access app
+        // VM is set up — preserve tenant and VPS record
         await supabaseAdmin
           .from("tenants")
           .update({ status: "provisioning_failed" })
@@ -169,9 +180,6 @@ export async function POST(req: NextRequest) {
       }
 
       // Full failure — rollback tenant record (cascade deletes VpsInstance)
-      if (accessAppId) {
-        await deleteTenantAccessApp(accessAppId).catch(() => {});
-      }
       await supabaseAdmin.from("audit_logs").delete().eq("tenant_id", tenant.id);
       await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
       throw err;
