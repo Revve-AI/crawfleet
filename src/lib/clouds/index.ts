@@ -6,6 +6,11 @@ const providerFactories: Record<string, () => CloudProvider> = {
     const { GcpCloudProvider } = require("./gcp") as typeof import("./gcp");
     return new GcpCloudProvider();
   },
+  hetzner: () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { HetznerCloudProvider } = require("./hetzner") as typeof import("./hetzner");
+    return new HetznerCloudProvider();
+  },
 };
 
 const cache: Record<string, CloudProvider> = {};
