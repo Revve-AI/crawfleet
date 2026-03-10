@@ -115,13 +115,13 @@ The Dockerfile uses a multi-stage build with `node:22-alpine`:
 
 1. **deps** — installs all dependencies
 2. **prod-deps** — installs production dependencies only
-3. **builder** — runs `next build` and compiles `server.ts` with esbuild
+3. **builder** — runs `next build`
 4. **runner** — minimal image with `cloudflared`, production dependencies, and built assets (runs as `node` user)
 
 At container startup, `entrypoint.sh`:
 1. Replaces Supabase URL placeholders in client JS bundles (required because Next.js inlines `NEXT_PUBLIC_*` variables at build time)
 2. Runs `node-pg-migrate up`
-3. Starts the custom server
+3. Starts the Next.js server
 
 ## Updating
 

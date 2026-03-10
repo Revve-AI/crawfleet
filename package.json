@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "esbuild server.ts --bundle --platform=node --packages=external --format=esm --outfile=.dev-server.mjs && node --env-file=.env .dev-server.mjs",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -18,16 +18,13 @@
     "@google-cloud/storage": "^7.0.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.49.1",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "dotenv": "^17.3.1",
     "next": "^15.1.0",
     "node-pg-migrate": "^7.9.1",
     "pg": "^8.13.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "ssh2": "^1.17.0",
-    "ws": "^8.19.0"
+    "ssh2": "^1.17.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -37,8 +34,6 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ssh2": "^1.15.5",
-    "@types/ws": "^8.18.1",
-    "esbuild": "^0.27.3",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.1.0",
     "tailwindcss": "^4.0.0",
@@ -46,8 +41,6 @@
     "typescript": "^5.7.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+    "onlyBuiltDependencies": []
   }
 }

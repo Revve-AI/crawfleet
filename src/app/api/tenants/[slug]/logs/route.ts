@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { requireTenantAccess } from "@/lib/tenant-access";
 import { getProvider } from "@/lib/providers";
 
+export const maxDuration = 300;
+
 type Params = { params: Promise<{ slug: string }> };
 
 export async function GET(req: NextRequest, { params }: Params) {

@@ -165,26 +165,6 @@ GET /api/tenants/{slug}/logs
 
 Returns an SSE stream of `journalctl -u openclaw -f` output. The stream continues until the client disconnects.
 
-### Shell (WebSocket)
-```
-WS /api/tenants/{slug}/shell?access_token=...
-```
-
-Opens an interactive terminal session. Connects to the VM through the Cloudflare Tunnel via SSH. Requires a Supabase access token as a query parameter.
-
-**Client -> Server:**
-```json
-{"type": "input", "data": "ls\n"}
-{"type": "resize", "cols": 80, "rows": 24}
-```
-
-**Server -> Client:**
-```json
-{"type": "output", "data": "file1.txt\nfile2.txt\n"}
-{"type": "exit"}
-{"type": "error", "message": "VPS not ready"}
-```
-
 ---
 
 ## Fleet
