@@ -143,29 +143,6 @@ When a tenant VM needs an API key (e.g., `ANTHROPIC_API_KEY`), Crawfleet resolve
 
 This allows setting keys once for all tenants while still supporting per-tenant overrides. Note that environment variable changes require a redeploy, as they are written to `/etc/openclaw.env` on the VM.
 
-## Custom server
-
-Next.js does not natively support WebSockets. `server.ts` wraps the Next.js handler with a raw HTTP server to support interactive shell access:
-
-```
-server.ts
-├── HTTP -> Next.js (pages and API routes)
-└── WebSocket upgrades on /api/tenants/{slug}/shell
-    ├── Authentication via Supabase token in query string
-    ├── Ownership verification (tenant owner or admin)
-    ├── SSH connection through Cloudflare Tunnel to the VM
-    └── Bidirectional pipe: xterm.js <-> WebSocket <-> SSH
-```
-
-WebSocket message format:
-- `{"type": "input", "data": "ls\n"}` — keystrokes from the browser
-- `{"type": "output", "data": "..."}` — terminal output from the VM
-- `{"type": "resize", "cols": 80, "rows": 24}` — terminal resize
-- `{"type": "exit"}` — shell session ended
-- `{"type": "error", "message": "..."}` — error occurred
-
-A 30-second ping interval prevents Cloudflare from closing idle connections.
-
 ## Cloud provider abstraction
 
 The `CloudProvider` interface (`src/lib/clouds/types.ts`) defines the contract for adding new cloud providers:
@@ -188,7 +165,6 @@ Currently only GCP is implemented. See [adding-cloud-providers.md](adding-cloud-
 ## Directory layout
 
 ```
-├── server.ts                    # Custom HTTP + WebSocket server
 ├── entrypoint.sh                # Docker entrypoint
 ├── Dockerfile                   # Multi-stage build (node:22-alpine)
 ├── docker-compose.yml           # Dashboard container

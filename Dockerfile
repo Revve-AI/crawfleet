@@ -23,7 +23,6 @@ ENV NEXT_PUBLIC_SUPABASE_URL=__NEXT_PUBLIC_SUPABASE_URL__
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=__NEXT_PUBLIC_SUPABASE_ANON_KEY__
 
 RUN pnpm build
-RUN pnpm exec esbuild server.ts --bundle --platform=node --target=node22 --outfile=custom-server.js --external:next --external:@supabase/supabase-js --external:@supabase/ssr --external:@google-cloud/storage --external:ssh2 --external:@google-cloud/compute --external:pg
 
 FROM base AS runner
 WORKDIR /app
@@ -38,7 +37,6 @@ RUN apk add --no-cache curl \
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=node:node /app/.next ./.next
-COPY --from=builder --chown=node:node /app/custom-server.js ./custom-server.js
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/package.json ./package.json
 COPY --chown=node:node entrypoint.sh ./entrypoint.sh

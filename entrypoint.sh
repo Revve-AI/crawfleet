@@ -8,4 +8,4 @@ find .next -type f -name "*.js" -exec sed -i \
   {} +
 
 npx node-pg-migrate up --migrations-dir migrations --database-url-var DATABASE_URL
-exec node custom-server.js
+exec npx next start -H 0.0.0.0 -p ${PORT:-3000}
