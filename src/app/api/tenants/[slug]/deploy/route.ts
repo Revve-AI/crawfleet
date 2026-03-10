@@ -5,6 +5,8 @@ import { getProvider } from "@/lib/providers";
 import { sseResponse, type SSESend } from "@/lib/sse";
 import type { TenantWithVps } from "@/lib/supabase/types";
 
+export const maxDuration = 300;
+
 type Params = { params: Promise<{ slug: string }> };
 
 export async function POST(req: NextRequest, { params }: Params) {

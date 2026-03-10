@@ -6,6 +6,8 @@ import { getProvider } from "@/lib/providers";
 import { PartialProvisioningError } from "@/lib/providers/types";
 import { sseResponse, type SSESend } from "@/lib/sse";
 
+export const maxDuration = 300;
+
 type Params = { params: Promise<{ slug: string }> };
 
 export async function POST(_req: NextRequest, { params }: Params) {

@@ -11,6 +11,8 @@ import { apiError } from "@/lib/api-error";
 import { sseResponse, type SSESend } from "@/lib/sse";
 import type { TenantWithVps } from "@/lib/supabase/types";
 
+export const maxDuration = 300;
+
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,18}[a-z0-9]$/;
 
 function validateCreate(body: TenantCreateInput): string | null {

@@ -8,6 +8,8 @@ import { connectWithRetry, execSSH, escapeForBash } from "@/lib/providers/ssh";
 import { generateInstallTailscaleScript } from "@/lib/providers/vps-setup-script";
 import { resolveTailscaleCredentials, createAuthKey, findDeviceByHostname } from "@/lib/tailscale";
 import { deleteTunnel } from "@/lib/cloudflare-tunnel";
+
+export const maxDuration = 300;
 import { deleteTenantAccessApp } from "@/lib/cloudflare-access";
 import { CLOUDFLARE_DOMAIN } from "@/lib/constants";
 
